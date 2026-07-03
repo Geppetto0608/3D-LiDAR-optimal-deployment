@@ -1,0 +1,40 @@
+Source-Available Proprietary Research License
+
+Copyright (c) 2026 Geppetto0608. All rights reserved.
+
+This repository, including all source code, configuration files, datasets,
+documentation, figures, generated outputs, and associated materials
+(collectively, the "Work"), is provided for viewing and evaluation only.
+
+This Work is not open source. No license is granted to use, copy, modify,
+merge, publish, distribute, sublicense, sell, commercialize, reproduce, or
+create derivative works from the Work except with prior written permission
+from the copyright holder.
+
+Without prior written permission, the following uses are expressly prohibited:
+
+1. Academic or research publication use, including use in journal papers,
+   conference papers, workshop papers, theses, dissertations, preprints,
+   technical reports, grant reports, or other scholarly outputs.
+
+2. Commercial use, including use in products, services, consulting, paid
+   research and development, patents, technology transfer, internal commercial
+   evaluation, or any activity intended to produce commercial advantage.
+
+3. Redistribution or public sharing of the Work, modified versions of the Work,
+   generated outputs, experiment results, figures, tables, or substantial
+   portions of the implementation.
+
+4. Reuse of the algorithms, implementation details, experiment pipeline,
+   result schema, configuration files, or generated outputs as a basis for a
+   competing or derivative academic, research, or commercial project.
+
+Viewing the repository through GitHub or downloading it solely to inspect its
+contents does not grant any additional rights. Any use beyond private viewing
+and evaluation requires prior written permission from the copyright holder.
+
+THE WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+FROM OR RELATED TO THE WORK.
