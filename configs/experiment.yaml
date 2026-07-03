@@ -1,0 +1,62 @@
+lidar_profile: VELODYNE64_R30
+scenario_ids: [0, 1, 2, 3, 6, 9]
+k_values: [1, 2, 3, 4, 5, 6]
+experiment_tag: r30_refactor
+
+candidate:
+  xy_step_m: 2.0
+  z_min: 3.0
+  z_max: 6.0
+  z_step: 1.0
+  yaw_step_deg: 5.0
+  yaw_axis_min_deg: 35.0
+  yaw_axis_max_deg: 145.0
+  pitch_min_deg: -25.0
+  pitch_max_deg: -5.0
+  pitch_step_deg: 2.5
+  max_orientations_per_position: 0
+
+target:
+  coverage_z_slices: [1.0, 1.5, 2.0]
+  road_detection: 1
+
+solver:
+  solver: gurobi
+  threads: 1
+  time_limit_sec: 1800
+  mip_gap: 0.05
+  nodefile_start_gb: 0.5
+  nodefile_dir: data/gurobi_nodefiles
+  soft_mem_limit_gb: 80
+
+mappo:
+  episodes: 20000
+  trials: 5
+  seed_base: 0
+  ppo_lr: 0.00001
+  ppo_gamma: 0.999
+  ppo_eps_clip: 0.15
+  ppo_k_epochs: 5
+  ppo_update_timestep: 512
+  ppo_entropy_coef: 0.003
+  ppo_gae_lambda: 0.95
+  ppo_value_clip: 0.2
+  ppo_minibatch_size: 128
+
+output:
+  results_dir: results/active
+  cache_dir: data/cache
+
+lidar_profiles:
+  VELODYNE64:
+    h_fov_deg: 360.0
+    v_fov_deg: 26.9
+    max_range_m: 80.0
+  VELODYNE64_R40:
+    h_fov_deg: 360.0
+    v_fov_deg: 26.9
+    max_range_m: 40.0
+  VELODYNE64_R30:
+    h_fov_deg: 360.0
+    v_fov_deg: 26.9
+    max_range_m: 30.0
