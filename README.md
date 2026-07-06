@@ -26,6 +26,41 @@ tests/test_pipeline.py               파이프라인 테스트
 
 `results/`, `data/cache/`, `logs/`, `.venv/`는 git에 포함하지 않습니다.
 
+## Quick Start
+
+```bash
+git clone https://github.com/Geppetto0608/3D-LiDAR-optimal-deployment.git
+cd 3D-LiDAR-optimal-deployment
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Lightweight checks:
+
+```bash
+python -m py_compile main.py test.py view_result.py src/environment.py src/outputs.py src/visualize.py src/methods/milp.py src/methods/greedy.py src/methods/mappo.py tests/test_pipeline.py
+python tests/test_pipeline.py
+```
+
+Dry-run examples:
+
+```bash
+python main.py milp --config configs/experiment.yaml --scenario-ids 0 --k-values 1 --dry-run
+python main.py greedy --config configs/experiment.yaml --scenario-ids 0 --k-values 1 --dry-run
+python main.py mappo --config configs/experiment.yaml --scenario-ids 0 --k-values 1 --episodes 10 --trials 1 --tag dryrun --dry-run
+```
+
+Full runs can be expensive. Gurobi requires a valid license; if unavailable, the code can fall back to PuLP/CBC for smaller cases.
+
 ## Experiment Goal
 
 목표는 도로 target coverage를 최대화하는 LiDAR 배치 방법을 비교하는 것입니다.
@@ -265,6 +300,23 @@ results/active/
   src/methods/milp.py src/methods/greedy.py src/methods/mappo.py \
   tests/test_pipeline.py
 ```
+
+Current committed validation evidence:
+
+- Pipeline smoke tests are included in [tests/test_pipeline.py](tests/test_pipeline.py).
+- Generated result tables, figures, solver logs, and MAPPO training curves are not committed.
+- Quantitative comparison between MILP, GREEDY, and MAPPO: TBD.
+- Runtime and memory benchmark: TBD.
+
+## Portfolio TODO
+
+Highest-impact additions before a portfolio review:
+
+1. Add a small curated `docs/` figure showing one scenario, LiDAR placements, and covered/uncovered targets.
+2. Add one reproducible small-case result table generated from a documented command.
+3. Add an architecture diagram: scenario metadata -> candidate generation -> visibility cache -> solver/agent -> shared evaluator -> outputs.
+4. Document hardware/software environment used for any full experiment results.
+5. Add a note explaining which results require Gurobi and which can run with PuLP/CBC.
 
 ## Citation and Use
 
