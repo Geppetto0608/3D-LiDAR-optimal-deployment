@@ -1,0 +1,9 @@
+numpy
+scipy
+matplotlib
+pandas
+PyYAML
+pulp
+gurobipy
+torch
+open3d

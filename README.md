@@ -74,7 +74,36 @@ hj_ws/
 └── LICENSE
 ```
 
-로컬에는 다음 완료 결과가 존재합니다.
+### 2.1 Quick Start
+
+Linux:
+
+```bash
+git clone https://github.com/Geppetto0608/3D-LiDAR-optimal-deployment.git
+cd 3D-LiDAR-optimal-deployment
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+경량 검증:
+
+```bash
+python -m py_compile main.py test.py view_result.py src/environment.py src/outputs.py src/visualize.py src/methods/milp.py src/methods/greedy.py src/methods/mappo.py tests/test_pipeline.py
+python tests/test_pipeline.py
+```
+
+전체 실행은 계산량이 큽니다. Gurobi backend를 사용하려면 유효한 라이선스가 필요하며, 사용할 수 없을 경우 작은 문제에 대해 PuLP/CBC fallback을 시도합니다.
+
+저장소에는 다음 완료 결과가 포함됩니다.
 
 ```text
 results/journal_r30_top10_20260707/
@@ -1533,7 +1562,7 @@ matplotlib
 PyYAML
 ```
 
-현재 workspace는 `.venv`의 Python 3.12를 사용합니다. dependency manifest가 없으므로 새 시스템에서 동일 환경을 재현하려면 버전 고정 파일을 먼저 만들어야 합니다.
+현재 workspace는 `.venv`의 Python 3.12를 사용합니다. 기본 의존성은 `requirements.txt`에 정리되어 있지만 버전이 고정되어 있지 않으므로, 논문 재현용 배포 전에는 설치 버전을 lock 파일로 기록해야 합니다.
 
 ## 19. 검증 명령
 
