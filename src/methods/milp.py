@@ -192,6 +192,7 @@ def _solve_with_pulp(candidate_set: CandidateSet, budget_k: int, config: Experim
 
 def _solve_with_gurobi(candidate_set: CandidateSet, budget_k: int, config: ExperimentConfig, start_ids: Sequence[int] | None = None) -> dict[str, Any]:
     import gurobipy as gp
+    import scipy.sparse as sp
     from gurobipy import GRB
 
     model = gp.Model("lidar_budget_coverage")
@@ -216,22 +217,46 @@ def _solve_with_gurobi(candidate_set: CandidateSet, budget_k: int, config: Exper
         set_optional_param("NodefileStart", float(config.solver.get("nodefile_start_gb")))
     if config.solver.get("soft_mem_limit_gb") is not None:
         set_optional_param("SoftMemLimit", float(config.solver.get("soft_mem_limit_gb")))
-    x = model.addVars(len(candidate_set.candidates), vtype=GRB.BINARY, name="x")
-    y = model.addVars(len(candidate_set.target_points), vtype=GRB.BINARY, name="y")
+
+    num_candidates = len(candidate_set.candidates)
+    num_targets = len(candidate_set.target_points)
+    z = model.addMVar(num_candidates + num_targets, vtype=GRB.BINARY, name="z")
+    x = z[:num_candidates]
+    y = z[num_candidates:]
     start_set = {int(v) for v in (start_ids or [])}
-    for i in range(len(candidate_set.candidates)):
+    for i in range(num_candidates):
         if start_set:
-            x[i].Start = 1.0 if i in start_set else 0.0
-    target_to_candidates: list[list[int]] = [[] for _ in range(len(candidate_set.target_points))]
+            z[i].Start = 1.0 if i in start_set else 0.0
+
+    # Build target coverage constraints as one sparse matrix operation:
+    # y_j - sum_i a_ij x_i <= 0, plus sum_i x_i <= K.
+    target_rows: list[np.ndarray] = []
+    candidate_cols: list[np.ndarray] = []
     for cand in candidate_set.candidates:
-        for target_idx in np.flatnonzero(cand.covered):
-            target_to_candidates[int(target_idx)].append(cand.candidate_id)
-    for target_idx, cids in enumerate(target_to_candidates):
-        model.addConstr(y[target_idx] <= gp.quicksum(x[cid] for cid in cids) if cids else y[target_idx] == 0)
-    model.addConstr(gp.quicksum(x[i] for i in range(len(candidate_set.candidates))) <= int(budget_k))
-    model.setObjective(gp.quicksum(y[j] for j in range(len(candidate_set.target_points))), GRB.MAXIMIZE)
+        covered_idx = np.flatnonzero(cand.covered).astype(np.int32, copy=False)
+        if covered_idx.size == 0:
+            continue
+        target_rows.append(covered_idx)
+        candidate_cols.append(np.full(covered_idx.shape, cand.candidate_id, dtype=np.int32))
+    if target_rows:
+        rows = np.concatenate(target_rows)
+        cols = np.concatenate(candidate_cols)
+        data = np.ones(rows.shape[0], dtype=np.float64)
+        coverage = sp.coo_matrix((data, (rows, cols)), shape=(num_targets, num_candidates)).tocsr()
+    else:
+        coverage = sp.csr_matrix((num_targets, num_candidates), dtype=np.float64)
+    cover_constraints = sp.hstack([-coverage, sp.eye(num_targets, format="csr")], format="csr")
+    budget_constraints = sp.hstack(
+        [sp.csr_matrix(np.ones((1, num_candidates), dtype=np.float64)), sp.csr_matrix((1, num_targets), dtype=np.float64)],
+        format="csr",
+    )
+    constraints = sp.vstack([cover_constraints, budget_constraints], format="csr")
+    rhs = np.concatenate([np.zeros(num_targets, dtype=np.float64), np.asarray([float(budget_k)], dtype=np.float64)])
+    model.addMConstr(constraints, z, "<", rhs, name="coverage_budget")
+    model.setObjective(y.sum(), GRB.MAXIMIZE)
     model.optimize()
-    selected = [i for i in range(len(candidate_set.candidates)) if model.SolCount > 0 and float(x[i].X) > 0.5]
+    solution = z.X[:num_candidates] if model.SolCount > 0 else []
+    selected = [i for i, value in enumerate(solution) if float(value) > 0.5]
     if model.SolCount == 0 and start_ids:
         selected = [int(v) for v in start_ids]
     return {"selected_ids": selected, "solver_status": str(model.Status), "solver_status_code": int(model.Status), "objective": float(model.ObjVal) if model.SolCount > 0 else None, "best_bound": float(model.ObjBound) if model.SolCount > 0 else None, "mip_gap": float(model.MIPGap) if model.SolCount > 0 else None, "solve_time_sec": float(model.Runtime)}
@@ -255,7 +280,29 @@ def solve_budget_frontier(scenario: Scenario, lidar_profile: str, config: Experi
             frontier_best_count, frontier_best_ratio, frontier_best_selected = greedy_count, greedy_ratio, list(greedy_start)
             frontier_source_k, frontier_source_method = k, "greedy_warm_start"
         start_ids = frontier_best_selected if frontier_best_selected and len(frontier_best_selected) <= int(k) else None
-        if config.solver_name.lower() == "gurobi":
+        if k == 1:
+            solve_result = {
+                "selected_ids": greedy_start,
+                "solver_status": "SKIPPED_EXACT_K1",
+                "solver_status_code": None,
+                "objective": float(greedy_count),
+                "best_bound": float(greedy_count),
+                "mip_gap": 0.0,
+                "solve_time_sec": 0.0,
+                "solver_backend": "analytic_skip",
+            }
+        elif frontier_best_count >= len(candidate_set.target_points):
+            solve_result = {
+                "selected_ids": frontier_best_selected,
+                "solver_status": "SKIPPED_PROVEN_FULL_COVERAGE",
+                "solver_status_code": None,
+                "objective": float(frontier_best_count),
+                "best_bound": float(frontier_best_count),
+                "mip_gap": 0.0,
+                "solve_time_sec": 0.0,
+                "solver_backend": "analytic_skip",
+            }
+        elif config.solver_name.lower() == "gurobi":
             try:
                 solve_result = _solve_with_gurobi(candidate_set, k, config, start_ids=start_ids)
                 solve_result["solver_backend"] = "gurobi"

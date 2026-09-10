@@ -1,0 +1,43 @@
+{
+  "method": "MILP_BUDGET",
+  "scenario_id": 0,
+  "topology": "STRAIGHT",
+  "lidar_profile": "VELODYNE64_R30",
+  "lidar_model": "VELODYNE64_R30",
+  "max_range_m": 30.0,
+  "budget_k": 2,
+  "budget_mode": "at_most",
+  "candidate_mode": "topm10",
+  "action_space": "discrete_topm_candidate_set",
+  "num_selected": 2,
+  "positions_npy": "results/journal_r30_top10_20260707/milp/milp_velodyne64_r30_journal_r30_top10_20260707_id0_k2.npy",
+  "coverage_pct": 98.66666666666667,
+  "coverage_ratio": 0.9866666666666667,
+  "covered_count": 7104,
+  "num_targets": 7200,
+  "episodes": null,
+  "seed": null,
+  "trial": null,
+  "mappo_tag": null,
+  "config_hash": "79a7508b07b990fa01758b5c1d0320616eb73ba8",
+  "cache_key": "visibility_s0_velodyne64_r30_79a7508b07b9",
+  "created_at": "2026-07-07T20:37:27",
+  "raw_coverage_pct": 98.66666666666667,
+  "frontier_coverage_pct": 98.66666666666667,
+  "frontier_source_budget_k": 2,
+  "frontier_source_method": "milp_raw_solution",
+  "solver_status": "2",
+  "solver_backend": "gurobi",
+  "solver_error": null,
+  "mip_gap": 0.013513513513513514,
+  "extra": {
+    "selected_candidate_ids": [
+      2427,
+      5747
+    ],
+    "frontier_selected_candidate_ids": [
+      2427,
+      5747
+    ]
+  }
+}

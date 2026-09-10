@@ -1,0 +1,39 @@
+{
+  "method": "GREEDY",
+  "scenario_id": 0,
+  "topology": "STRAIGHT",
+  "lidar_profile": "VELODYNE64_R30",
+  "lidar_model": "VELODYNE64_R30",
+  "max_range_m": 30.0,
+  "budget_k": 6,
+  "budget_mode": "at_most",
+  "candidate_mode": "topm10",
+  "action_space": "[x,y,z,yaw,pitch]",
+  "num_selected": 4,
+  "positions_npy": "results/journal_r30_top10_20260707/greedy/greedy_velodyne64_r30_journal_r30_top10_20260707_id0_k6.npy",
+  "coverage_pct": 100.0,
+  "coverage_ratio": 1.0,
+  "covered_count": 7200,
+  "num_targets": 7200,
+  "episodes": null,
+  "seed": null,
+  "trial": null,
+  "mappo_tag": null,
+  "config_hash": "79a7508b07b990fa01758b5c1d0320616eb73ba8",
+  "cache_key": "visibility_s0_velodyne64_r30_79a7508b07b9",
+  "created_at": "2026-07-07T20:00:55",
+  "extra": {
+    "selected_candidate_ids": [
+      2427,
+      5747,
+      2347,
+      3547
+    ],
+    "marginal_gains": [
+      4205,
+      2899,
+      87,
+      9
+    ]
+  }
+}
