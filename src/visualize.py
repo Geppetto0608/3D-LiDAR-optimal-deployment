@@ -154,7 +154,7 @@ def _draw_infrastructure_3d(ax, geometry: MapGeometry) -> None:
     for center in geometry.road_centers_x:
         draw_segment(float(center), horizontal=False)
     for x1, y1, x2, y2 in geometry.negative_zones:
-        _add_box(ax, x1, y1, x2, y2, geometry.building_height, "#5a5a63", z_base=0.1, alpha=0.65)
+        _add_box(ax, x1, y1, x2, y2, geometry.building_height, "#5a5a63", z_base=0.1, alpha=0.07)
 
 
 def save_episode_graph(train_log_npz: str | Path, output_png: str | Path, *, title: str = "Training curve") -> Path:
@@ -198,8 +198,13 @@ def save_3d_snapshot(path: str | Path, positions: np.ndarray, evaluation, *, tit
     path.parent.mkdir(parents=True, exist_ok=True)
 
     fig = plt.figure(figsize=(10, 8), dpi=160)
-    ax = fig.add_subplot(111, projection="3d")
+    ax = fig.add_subplot(111, projection="3d", computed_zorder=False)
     _draw_infrastructure_3d(ax, geometry)
+    cells = np.arange(geometry.grid_size / 2, geometry.map_len, geometry.grid_size)
+    installable = np.asarray([(x, y) for x in cells for y in cells if geometry.is_installable(x, y)])
+    if len(installable):
+        ax.scatter(installable[:, 0], installable[:, 1], 0.3, s=2, c="#0072b2",
+                   label="installable cells", zorder=3)
 
     pts = np.asarray(evaluation.target_points, dtype=np.float32)
     if len(pts):
@@ -208,19 +213,19 @@ def save_3d_snapshot(path: str | Path, positions: np.ndarray, evaluation, *, tit
         if len(uncovered):
             ax.scatter(uncovered[:, 0], uncovered[:, 1], uncovered[:, 2], s=2, c="#c7c7c7", alpha=0.12, label="uncovered")
         if len(covered):
-            ax.scatter(covered[:, 0], covered[:, 1], covered[:, 2], s=3, c="#2ca02c", alpha=0.45, label="covered")
+            ax.scatter(covered[:, 0], covered[:, 1], covered[:, 2], s=3, c="#2ca02c", alpha=0.45, label="covered", zorder=4)
 
     if len(positions):
         pos = np.atleast_2d(positions)
-        ax.scatter(pos[:, 0], pos[:, 1], pos[:, 2], s=60, c="#d62728", depthshade=True, label="LiDAR")
+        ax.scatter(pos[:, 0], pos[:, 1], pos[:, 2], s=60, c="#d62728", depthshade=False, label="LiDAR", zorder=6)
         for idx, row in enumerate(pos):
             yaw = np.deg2rad(float(row[3]))
             pitch = np.deg2rad(float(row[4]))
             dx = np.cos(pitch) * np.cos(yaw) * 5.0
             dy = np.cos(pitch) * np.sin(yaw) * 5.0
             dz = np.sin(pitch) * 5.0
-            ax.quiver(row[0], row[1], row[2], dx, dy, dz, color="#ffbf00", linewidth=1.8, arrow_length_ratio=0.25)
-            ax.text(row[0], row[1], row[2] + 1.0, f"A{idx}", color="black", fontsize=8)
+            ax.quiver(row[0], row[1], row[2], dx, dy, dz, color="#cc0077", linewidth=1.8, arrow_length_ratio=0.25, zorder=7)
+            ax.text(row[0], row[1], row[2] + 1.0, f"L{idx+1}", color="black", fontsize=8, zorder=8)
 
     ax.set_xlim(0.0, geometry.map_len)
     ax.set_ylim(0.0, geometry.map_width)
@@ -228,7 +233,9 @@ def save_3d_snapshot(path: str | Path, positions: np.ndarray, evaluation, *, tit
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")
     ax.set_zlabel("z [m]")
-    ax.set_title(title)
+    ax.set_zticks([0, 5, 10, 15])
+    ax.set_title(title.replace(" / scenario", "\nscenario"), fontsize=10)
+    ax.set_box_aspect((geometry.map_len, geometry.map_width, geometry.building_height))
     ax.view_init(elev=38, azim=-55)
     ax.legend(loc="upper left", fontsize=7)
     fig.tight_layout()

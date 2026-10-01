@@ -8,8 +8,35 @@ from typing import Any, Sequence
 import numpy as np
 
 from src.environment import ExperimentConfig, Scenario, get_lidar_profile
-from src.methods.milp import CandidateSet, build_oriented_candidates, planned_candidate_signature
+from src.core.candidate import CandidateSet
+from src.roadside.candidate_generator import build_oriented_candidates, planned_candidate_signature
 from src.outputs import build_result_record, save_positions_npy, save_result_json
+from src.core.models import PlacementProblem
+from src.core.evaluation import evaluate_selection
+
+
+def solve_problem(problem: PlacementProblem):
+    if problem.objective.legacy:
+        selection = greedy_select(problem.candidates, problem.budget_k)
+        return evaluate_selection(problem, selection.selected_ids)
+    rewards, costs = problem.objective.coefficients(problem)
+    covered = np.zeros(len(rewards), dtype=bool)
+    selected = []
+    available = set(range(len(costs)))
+    for _ in range(problem.budget_k):
+        if not available:
+            break
+        def rank(i):
+            mask = problem.candidates.candidates[i].covered
+            return (float(rewards[mask & ~covered].sum() - costs[i]),
+                    int(mask.sum()), -i)
+        best = max(available, key=rank)
+        if rank(best)[0] <= 0:
+            break
+        selected.append(best)
+        available.remove(best)
+        covered |= problem.candidates.candidates[best].covered
+    return evaluate_selection(problem, selected)
 
 
 @dataclass
@@ -92,4 +119,3 @@ def run_greedy_budget(
         save_result_json(result_base.with_suffix(".json"), record)
         records.append(record)
     return records
-

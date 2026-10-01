@@ -2,157 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 
 from src.environment import (
     ExperimentConfig,
-    MapGeometry,
     Scenario,
-    allowed_mount_yaws_deg,
-    bake_visibility_map,
-    compute_config_hash,
-    coverage_mask_for_pose,
     get_lidar_profile,
-    visibility_cache_path,
 )
 from src.outputs import build_result_record, save_positions_npy, save_result_json
 
 
-@dataclass
-class Candidate:
-    candidate_id: int
-    x: float
-    y: float
-    z: float
-    yaw: float
-    pitch: float
-    covered: np.ndarray
-
-    @property
-    def pose(self) -> list[float]:
-        return [self.x, self.y, self.z, self.yaw, self.pitch]
-
-
-@dataclass
-class CandidateSet:
-    candidates: list[Candidate]
-    target_points: np.ndarray
-    cache_key: str
-    config_hash: str
-    stats: dict[str, Any]
-
-    def positions_array(self, candidate_ids: Sequence[int]) -> np.ndarray:
-        lookup = {c.candidate_id: c for c in self.candidates}
-        return np.asarray([lookup[int(cid)].pose for cid in candidate_ids], dtype=float)
-
-
-def _frange(start: float, stop: float, step: float) -> Iterable[float]:
-    value = float(start)
-    while value <= float(stop) + 1e-9:
-        yield round(value, 10)
-        value += float(step)
-
-
-def _base_positions(geometry: MapGeometry, config: ExperimentConfig) -> list[tuple[float, float, float]]:
-    zs = list(_frange(config.z_min, config.z_max, config.z_step))
-    positions: list[tuple[float, float, float]] = []
-    cols = int(geometry.map_len / geometry.grid_size)
-    rows = int(geometry.map_width / geometry.grid_size)
-    seen_bins: set[tuple[int, int]] = set()
-    step_m = max(float(config.xy_step_m), geometry.grid_size)
-    for gx in range(cols):
-        for gy in range(rows):
-            x = (gx + 0.5) * geometry.grid_size
-            y = (gy + 0.5) * geometry.grid_size
-            if not geometry.is_installable(float(x), float(y)):
-                continue
-            key = (int(np.floor(x / step_m)), int(np.floor(y / step_m)))
-            if key in seen_bins:
-                continue
-            seen_bins.add(key)
-            for z in zs:
-                positions.append((float(x), float(y), float(z)))
-    return positions
-
-
-def planned_candidate_signature(scenario: Scenario, lidar_profile: str, config: ExperimentConfig) -> dict[str, Any]:
-    profile = get_lidar_profile(lidar_profile, config)
-    geometry = MapGeometry(scenario)
-    base_positions = _base_positions(geometry, config)
-    pitch_count = len(list(_frange(config.pitch_min_deg, config.pitch_max_deg, config.pitch_step_deg)))
-    top_m = int(config.max_orientations_per_position)
-    orientation_count = 0
-    for x, y, _z in base_positions:
-        yaw_count = len(allowed_mount_yaws_deg(x, y, geometry, config.yaw_step_deg, config.yaw_axis_min_deg, config.yaw_axis_max_deg))
-        raw = yaw_count * pitch_count
-        orientation_count += min(raw, top_m) if top_m > 0 else raw
-    config_hash = compute_config_hash(config, scenario, profile)
-    cache_key, cache_path = visibility_cache_path(config, scenario, profile)
-    return {
-        "scenario_id": int(scenario.scenario_id),
-        "topology": scenario.topology,
-        "lidar_profile": profile.name,
-        "topM": top_m,
-        "num_base_positions": int(len(base_positions)),
-        "num_candidates_planned": int(orientation_count),
-        "candidate_builder": "src.methods.milp.build_oriented_candidates",
-        "coverage_eval": "src.environment.evaluate_coverage",
-        "visibility_cache_path": str(cache_path),
-        "config_hash": config_hash,
-        "cache_key": cache_key,
-    }
-
-
-def build_oriented_candidates(scenario: Scenario, lidar_profile: str, config: ExperimentConfig, *, max_orientations_per_position: int | None = None, dedup_exact_cover: bool = True) -> CandidateSet:
-    profile = get_lidar_profile(lidar_profile, config)
-    visibility = bake_visibility_map(config, scenario, profile)
-    target_points = np.asarray(visibility["target_points"], dtype=float)
-    geometry = MapGeometry(scenario)
-    top_m = config.max_orientations_per_position if max_orientations_per_position is None else int(max_orientations_per_position)
-    candidates: list[Candidate] = []
-    seen_covers: set[bytes] = set()
-    before_pruning = after_pruning = skipped_dedup = 0
-    pitches = list(_frange(config.pitch_min_deg, config.pitch_max_deg, config.pitch_step_deg))
-    base_positions = _base_positions(geometry, config)
-    for x, y, z in base_positions:
-        yaws = allowed_mount_yaws_deg(x, y, geometry, config.yaw_step_deg, config.yaw_axis_min_deg, config.yaw_axis_max_deg)
-        local: list[tuple[int, float, float, np.ndarray]] = []
-        for yaw in yaws:
-            for pitch in pitches:
-                before_pruning += 1
-                covered = coverage_mask_for_pose([x, y, z, yaw, pitch], visibility, geometry, profile, config)
-                local.append((int(covered.sum()), float(yaw), float(pitch), covered))
-        local.sort(key=lambda item: (-item[0], item[1], item[2]))
-        if top_m > 0:
-            local = local[:top_m]
-        after_pruning += len(local)
-        for _, yaw, pitch, covered in local:
-            if dedup_exact_cover:
-                key = np.packbits(covered).tobytes()
-                if key in seen_covers:
-                    skipped_dedup += 1
-                    continue
-                seen_covers.add(key)
-            candidates.append(Candidate(len(candidates), x, y, z, yaw, pitch, covered))
-    coverage_edges = int(sum(int(c.covered.sum()) for c in candidates))
-    return CandidateSet(
-        candidates=candidates,
-        target_points=target_points,
-        cache_key=str(visibility["cache_key"]),
-        config_hash=str(visibility.get("meta", {}).get("config_hash", "")),
-        stats={
-            "num_targets": int(len(target_points)),
-            "num_base_positions": int(len(base_positions)),
-            "num_candidates": int(len(candidates)),
-            "orientation_candidates_before_pruning": int(before_pruning),
-            "orientation_candidates_after_pruning": int(after_pruning),
-            "skipped_dedup": int(skipped_dedup),
-            "num_coverage_edges": coverage_edges,
-        },
-    )
+from src.core.candidate import Candidate, CandidateSet
+from src.roadside.candidate_generator import (
+    _frange, _base_positions, planned_candidate_signature, build_oriented_candidates,
+)
 
 
 def milp_dry_run_signature(scenario: Scenario, lidar_profile: str, config: ExperimentConfig, k_values: Sequence[int]) -> list[dict[str, Any]]:
@@ -168,7 +33,7 @@ def _coverage_for_selected(candidate_set: CandidateSet, selected: Sequence[int])
     return count, float(count / max(len(candidate_set.target_points), 1))
 
 
-def _solve_with_pulp(candidate_set: CandidateSet, budget_k: int, config: ExperimentConfig, start_ids: Sequence[int] | None = None) -> dict[str, Any]:
+def _solve_with_pulp(candidate_set: CandidateSet, budget_k: int, config: ExperimentConfig, start_ids: Sequence[int] | None = None, *, coefficients=None) -> dict[str, Any]:
     import time
     import pulp
 
@@ -183,14 +48,20 @@ def _solve_with_pulp(candidate_set: CandidateSet, budget_k: int, config: Experim
     for target_idx, cids in enumerate(target_to_candidates):
         prob += y[target_idx] <= pulp.lpSum(x[cid] for cid in cids) if cids else y[target_idx] == 0
     prob += pulp.lpSum(x) <= int(budget_k)
-    prob += pulp.lpSum(y)
+    if coefficients is None:
+        prob += pulp.lpSum(y)
+    else:
+        rewards, costs = coefficients
+        prob += pulp.lpSum(float(rewards[j]) * y[j] for j in range(len(y))) - pulp.lpSum(float(costs[i]) * x[i] for i in range(len(x)))
     solver = pulp.PULP_CBC_CMD(msg=False, timeLimit=int(config.time_limit_sec), gapRel=float(config.mip_gap))
     prob.solve(solver)
+    if coefficients is not None and prob.sol_status not in (pulp.LpSolutionOptimal, pulp.LpSolutionIntegerFeasible):
+        raise RuntimeError('CBC produced no feasible integer solution')
     selected = [i for i, var in enumerate(x) if float(var.value() or 0.0) > 0.5]
     return {"selected_ids": selected, "solver_status": pulp.LpStatus.get(prob.status, str(prob.status)), "solver_status_code": prob.status, "objective": float(pulp.value(prob.objective) or 0.0), "best_bound": None, "mip_gap": None, "solve_time_sec": time.time() - t0}
 
 
-def _solve_with_gurobi(candidate_set: CandidateSet, budget_k: int, config: ExperimentConfig, start_ids: Sequence[int] | None = None) -> dict[str, Any]:
+def _solve_with_gurobi(candidate_set: CandidateSet, budget_k: int, config: ExperimentConfig, start_ids: Sequence[int] | None = None, *, coefficients=None) -> dict[str, Any]:
     import gurobipy as gp
     import scipy.sparse as sp
     from gurobipy import GRB
@@ -253,13 +124,41 @@ def _solve_with_gurobi(candidate_set: CandidateSet, budget_k: int, config: Exper
     constraints = sp.vstack([cover_constraints, budget_constraints], format="csr")
     rhs = np.concatenate([np.zeros(num_targets, dtype=np.float64), np.asarray([float(budget_k)], dtype=np.float64)])
     model.addMConstr(constraints, z, "<", rhs, name="coverage_budget")
-    model.setObjective(y.sum(), GRB.MAXIMIZE)
+    if coefficients is None:
+        model.setObjective(y.sum(), GRB.MAXIMIZE)
+    else:
+        rewards, costs = coefficients
+        model.setObjective(rewards @ y - costs @ x, GRB.MAXIMIZE)
     model.optimize()
     solution = z.X[:num_candidates] if model.SolCount > 0 else []
     selected = [i for i, value in enumerate(solution) if float(value) > 0.5]
     if model.SolCount == 0 and start_ids:
         selected = [int(v) for v in start_ids]
     return {"selected_ids": selected, "solver_status": str(model.Status), "solver_status_code": int(model.Status), "objective": float(model.ObjVal) if model.SolCount > 0 else None, "best_bound": float(model.ObjBound) if model.SolCount > 0 else None, "mip_gap": float(model.MIPGap) if model.SolCount > 0 else None, "solve_time_sec": float(model.Runtime)}
+
+
+def solve_problem(problem, config: ExperimentConfig):
+    from src.core.evaluation import evaluate_selection
+    from src.methods.greedy import solve_problem as greedy_problem
+
+    warm = greedy_problem(problem)
+    if not problem.candidates.candidates or problem.budget_k == 0:
+        return warm
+    backend = config.solver_name.lower()
+    if backend == 'gurobi':
+        solver = _solve_with_gurobi
+    elif backend in ('pulp', 'cbc'):
+        solver = _solve_with_pulp
+    else:
+        raise ValueError(f'Unsupported solver: {backend}')
+    result = solver(problem.candidates, problem.budget_k, config, warm.selected_ids,
+                    coefficients=problem.objective.coefficients(problem))
+    solved = evaluate_selection(problem, result['selected_ids'], result)
+    if solved.objective_score < warm.objective_score:
+        warm.metadata = {**result, 'selection_source': 'greedy_warm_start'}
+        return warm
+    solved.metadata['selection_source'] = 'solver'
+    return solved
 
 
 def solve_budget_frontier(scenario: Scenario, lidar_profile: str, config: ExperimentConfig, k_values: Sequence[int], *, output_tag: str) -> list[dict[str, Any]]:
@@ -355,7 +254,11 @@ def solve_budget_frontier(scenario: Scenario, lidar_profile: str, config: Experi
             solver_backend=solve_result.get("solver_backend"),
             solver_error=solve_result.get("gurobi_error"),
             mip_gap=solve_result.get("mip_gap"),
-            extra={"selected_candidate_ids": selected, "frontier_selected_candidate_ids": frontier_best_selected},
+            extra={"selected_candidate_ids": selected, "frontier_selected_candidate_ids": frontier_best_selected,
+                   "solver_objective": solve_result.get("objective"),
+                   "solver_best_bound": solve_result.get("best_bound"),
+                   "solve_time_sec": solve_result.get("solve_time_sec"),
+                   "candidate_count": len(candidate_set.candidates)},
         )
         save_result_json(result_base.with_suffix(".json"), record)
         records.append(record)

@@ -1,0 +1,1 @@
+"""Roadside application adapters."""

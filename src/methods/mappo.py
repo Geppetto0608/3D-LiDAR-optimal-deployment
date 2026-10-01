@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import gc
+import hashlib
+import json
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
@@ -48,6 +50,15 @@ class MappoPlanRow:
     output_tag: str
 
 
+@dataclass(frozen=True)
+class _PoseCandidate:
+    source: str
+    positions: np.ndarray
+    coverage_pct: float
+    score: float
+    postprocessed: bool = False
+
+
 @dataclass
 class LegacyMAPPOParams:
     num_agents: int
@@ -76,20 +87,22 @@ class LegacyMAPPOParams:
     w_marginal_gain: float = 1.0
     w_outward_pen: float = 2.0
     edge_margin_m: float = 5.0
-    ppo_lr: float = 1e-5
+    ppo_lr: float = 3e-4
     ppo_gamma: float = 0.999
     ppo_eps_clip: float = 0.15
     ppo_k_epochs: int = 5
-    ppo_update_timestep: int = 512
+    ppo_update_timestep: int = 256
     ppo_entropy_coef: float = 0.003
     ppo_gae_lambda: float = 0.95
     ppo_value_clip: float = 0.2
     ppo_minibatch_size: int = 128
+    ppo_reward_scale: float = 0.01
+    ppo_reward_clip: float = 10.0
     ppo_entropy_min: float = 0.0
     ppo_entropy_decay: float = 0.997
     ppo_random_action_prob: float = 0.005
     eval_interval: int = 100
-    eval_steps: int = 5
+    eval_steps: int = 50
     plateau_patience: int = 200
     plateau_entropy_scale: float = 0.3
     plateau_uncovered_scale: float = 0.3
@@ -138,25 +151,42 @@ def _legacy_params(row: MappoPlanRow, config: ExperimentConfig) -> LegacyMAPPOPa
         w_marginal_gain=float(_mappo_value(config, "w_marginal_gain", 1.0)),
         w_outward_pen=float(_mappo_value(config, "w_outward_pen", 2.0)),
         edge_margin_m=float(_mappo_value(config, "edge_margin_m", 5.0)),
-        ppo_lr=float(_mappo_value(config, "ppo_lr", 1e-5)),
+        ppo_lr=float(_mappo_value(config, "ppo_lr", 3e-4)),
         ppo_gamma=float(_mappo_value(config, "ppo_gamma", 0.999)),
         ppo_eps_clip=float(_mappo_value(config, "ppo_eps_clip", 0.15)),
         ppo_k_epochs=int(_mappo_value(config, "ppo_k_epochs", 5)),
-        ppo_update_timestep=int(_mappo_value(config, "ppo_update_timestep", 512)),
+        ppo_update_timestep=int(_mappo_value(config, "ppo_update_timestep", 256)),
         ppo_entropy_coef=float(_mappo_value(config, "ppo_entropy_coef", 0.003)),
         ppo_gae_lambda=float(_mappo_value(config, "ppo_gae_lambda", 0.95)),
         ppo_value_clip=float(_mappo_value(config, "ppo_value_clip", 0.2)),
         ppo_minibatch_size=int(_mappo_value(config, "ppo_minibatch_size", 128)),
+        ppo_reward_scale=float(_mappo_value(config, "ppo_reward_scale", 0.01)),
+        ppo_reward_clip=float(_mappo_value(config, "ppo_reward_clip", 10.0)),
         ppo_entropy_min=float(_mappo_value(config, "ppo_entropy_min", 0.0)),
         ppo_entropy_decay=float(_mappo_value(config, "ppo_entropy_decay", 0.997)),
         ppo_random_action_prob=float(_mappo_value(config, "ppo_random_action_prob", 0.005)),
         eval_interval=int(_mappo_value(config, "eval_interval", 100)),
-        eval_steps=int(_mappo_value(config, "eval_steps", 5)),
+        eval_steps=int(_mappo_value(config, "eval_steps", 50)),
         plateau_patience=int(_mappo_value(config, "plateau_patience", 200)),
         plateau_entropy_scale=float(_mappo_value(config, "plateau_entropy_scale", 0.3)),
         plateau_uncovered_scale=float(_mappo_value(config, "plateau_uncovered_scale", 0.3)),
         print_interval=int(_mappo_value(config, "print_interval", 20)),
     )
+
+
+def _training_config_hash(row: MappoPlanRow, params: LegacyMAPPOParams) -> str:
+    params_payload = asdict(params)
+    params_payload.pop("uncovered_centroid", None)
+    payload = {
+        "trainer": "mappo_native_port_rollout_v3",
+        "scenario_id": int(row.scenario_id),
+        "lidar_profile": row.lidar_profile,
+        "budget_k": int(row.budget_k),
+        "seed": int(row.seed),
+        "training_steps": int(row.episodes),
+        "params": params_payload,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def plan_mappo_runs(
@@ -527,7 +557,16 @@ class LegacyMAPPOEnv:
 
 
 class MAPPOActorCritic(nn.Module):
-    def __init__(self, state_dim: int, action_dim: int, global_dim: int, local_map_size: int, pose_dim: int = 5, hint_dim: int = HINT_DIM):
+    def __init__(
+        self,
+        state_dim: int,
+        action_dim: int,
+        global_dim: int,
+        local_map_size: int,
+        num_agents: int,
+        pose_dim: int = 5,
+        hint_dim: int = HINT_DIM,
+    ):
         super().__init__()
         self.pose_dim = pose_dim
         self.hint_dim = hint_dim
@@ -543,7 +582,7 @@ class MAPPOActorCritic(nn.Module):
         fusion_dim = (32 * local_map_size * local_map_size) + pose_dim + hint_dim
         self.actor_body = nn.Sequential(nn.Linear(fusion_dim, 256), nn.ReLU(), nn.Linear(256, 128), nn.ReLU())
         self.actor_head = nn.Linear(128, action_dim)
-        self.critic = nn.Sequential(nn.Linear(global_dim, 256), nn.ReLU(), nn.Linear(256, 128), nn.ReLU(), nn.Linear(128, 1))
+        self.critic = nn.Sequential(nn.Linear(global_dim, 256), nn.ReLU(), nn.Linear(256, 128), nn.ReLU(), nn.Linear(128, num_agents))
 
     def _encode_actor(self, state: torch.Tensor) -> torch.Tensor:
         pose = state[:, : self.pose_dim]
@@ -552,69 +591,140 @@ class MAPPOActorCritic(nn.Module):
         hint = state[:, self.pose_dim + self.local_flat :]
         return self.actor_body(torch.cat([pose, hint, self.cnn(local_map)], dim=1))
 
-    def act(self, state: torch.Tensor, mask: torch.Tensor) -> tuple[int, torch.Tensor]:
+    def action_distribution(self, state: torch.Tensor, mask: torch.Tensor, random_action_prob: float = 0.0) -> Categorical:
         logits = self.actor_head(self._encode_actor(state)).masked_fill(mask == 0, -1e9)
-        dist = Categorical(logits=logits)
+        if random_action_prob <= 0.0:
+            return Categorical(logits=logits)
+        valid = (mask > 0).to(dtype=logits.dtype)
+        uniform = valid / valid.sum(dim=-1, keepdim=True).clamp_min(1.0)
+        policy_probs = torch.softmax(logits, dim=-1)
+        mixed_probs = ((1.0 - random_action_prob) * policy_probs) + (random_action_prob * uniform)
+        return Categorical(probs=mixed_probs)
+
+    def act(self, state: torch.Tensor, mask: torch.Tensor, random_action_prob: float = 0.0) -> tuple[int, torch.Tensor]:
+        dist = self.action_distribution(state, mask, random_action_prob)
         action = dist.sample()
         return int(action.item()), dist.log_prob(action)
 
-    def evaluate(self, state: torch.Tensor, global_state: torch.Tensor, action: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        logits = self.actor_head(self._encode_actor(state)).masked_fill(mask == 0, -1e9)
-        dist = Categorical(logits=logits)
-        return dist.log_prob(action), self.critic(global_state), dist.entropy()
+    def evaluate_actor(
+        self,
+        state: torch.Tensor,
+        action: torch.Tensor,
+        mask: torch.Tensor,
+        random_action_prob: float = 0.0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        dist = self.action_distribution(state, mask, random_action_prob)
+        return dist.log_prob(action), dist.entropy()
+
+
+def _compute_time_agent_gae(
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+    values: torch.Tensor,
+    bootstrap_values: torch.Tensor,
+    gamma: float,
+    gae_lambda: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute GAE only along time while preserving independent agent columns."""
+    if rewards.ndim != 2 or values.shape != rewards.shape:
+        raise ValueError(f"Expected rewards/values [T,K], got {tuple(rewards.shape)} and {tuple(values.shape)}")
+    if dones.shape != rewards.shape[:1]:
+        raise ValueError(f"Expected dones [T], got {tuple(dones.shape)}")
+    if bootstrap_values.shape != rewards.shape[1:]:
+        raise ValueError(f"Expected bootstrap values [K], got {tuple(bootstrap_values.shape)}")
+    advantages = torch.zeros_like(rewards)
+    gae = torch.zeros_like(bootstrap_values)
+    next_values = bootstrap_values
+    for t in reversed(range(rewards.shape[0])):
+        not_done = 1.0 - dones[t]
+        delta = rewards[t] + (gamma * next_values * not_done) - values[t]
+        gae = delta + (gamma * gae_lambda * not_done * gae)
+        advantages[t] = gae
+        next_values = values[t]
+    return advantages, advantages + values
 
 
 class SharedMAPPO:
-    def __init__(self, state_dim: int, action_dim: int, global_dim: int, local_map_size: int, params: LegacyMAPPOParams, device: torch.device):
+    def __init__(self, state_dim: int, action_dim: int, global_dim: int, local_map_size: int, params: LegacyMAPPOParams, device: torch.device, policy_factory=MAPPOActorCritic):
         self.params = params
         self.device = device
-        self.policy = MAPPOActorCritic(state_dim, action_dim, global_dim, local_map_size).to(device)
-        self.optimizer = optim.Adam(self.policy.parameters(), lr=params.ppo_lr)
-        self.policy_old = MAPPOActorCritic(state_dim, action_dim, global_dim, local_map_size).to(device)
+        self.num_agents = int(params.num_agents)
+        self.policy = policy_factory(state_dim, action_dim, global_dim, local_map_size, self.num_agents).to(device)
+        self.actor_parameters = [
+            *self.policy.cnn.parameters(),
+            *self.policy.actor_body.parameters(),
+            *self.policy.actor_head.parameters(),
+        ]
+        self.critic_parameters = list(self.policy.critic.parameters())
+        self.actor_optimizer = optim.Adam(self.actor_parameters, lr=params.ppo_lr)
+        self.critic_optimizer = optim.Adam(self.critic_parameters, lr=params.ppo_lr)
+        self.policy_old = policy_factory(state_dim, action_dim, global_dim, local_map_size, self.num_agents).to(device)
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.buffer: dict[str, list[Any]] = {k: [] for k in ["s", "g", "a", "m", "lp", "r", "t"]}
+        self._last_next_global_state: torch.Tensor | None = None
         self.entropy_coef = params.ppo_entropy_coef
+        self.environment_steps = 0
+        self.update_history: list[dict[str, float | int]] = []
 
     def act(self, state: torch.Tensor, mask: torch.Tensor, deterministic: bool = False) -> tuple[int, torch.Tensor]:
         if deterministic:
             with torch.no_grad():
-                logits = self.policy_old.actor_head(self.policy_old._encode_actor(state.unsqueeze(0))).squeeze(0)
-                logits = logits.masked_fill(mask == 0, -1e9)
-                action = int(torch.argmax(logits).item())
-            return action, torch.tensor(0.0, device=self.device).reshape(1)
+                dist = self.policy_old.action_distribution(
+                    state.unsqueeze(0), mask.unsqueeze(0), self.params.ppo_random_action_prob
+                )
+                action = int(torch.argmax(dist.probs.squeeze(0)).item())
+            return action, torch.tensor(0.0, device=self.device)
         with torch.no_grad():
-            action, logp = self.policy_old.act(state.unsqueeze(0), mask.unsqueeze(0))
-        if self.params.ppo_random_action_prob > 0 and random.random() < self.params.ppo_random_action_prob:
-            valid_actions = torch.nonzero(mask > 0, as_tuple=False).flatten()
-            if valid_actions.numel() > 0:
-                action = int(valid_actions[torch.randint(len(valid_actions), (1,), device=self.device)].item())
-                with torch.no_grad():
-                    logits = self.policy_old.actor_head(self.policy_old._encode_actor(state.unsqueeze(0))).squeeze(0)
-                    logits = logits.masked_fill(mask == 0, -1e9)
-                    dist = Categorical(logits=logits)
-                    logp = dist.log_prob(torch.tensor(action, device=self.device))
-        return action, logp.reshape(1)
+            action, logp = self.policy_old.act(
+                state.unsqueeze(0), mask.unsqueeze(0), self.params.ppo_random_action_prob
+            )
+        return action, logp.squeeze()
 
-    def store(self, state: torch.Tensor, mask: torch.Tensor, action: int, logp: torch.Tensor, reward: float, global_state: torch.Tensor, done: bool = False) -> None:
-        scaled_reward = reward * 0.1
-        if not np.isfinite(scaled_reward):
-            print("[WARN] Non-finite reward detected, skip step")
+    def store_timestep(
+        self,
+        states: torch.Tensor,
+        masks: torch.Tensor,
+        actions: torch.Tensor,
+        log_probs: torch.Tensor,
+        rewards: np.ndarray | torch.Tensor,
+        global_state: torch.Tensor,
+        next_global_state: torch.Tensor,
+        done: bool = False,
+    ) -> None:
+        """Store one complete joint transition with shape [agents, ...]."""
+        rewards_t = torch.as_tensor(rewards, dtype=torch.float32, device=self.device) * self.params.ppo_reward_scale
+        reward_clip = float(self.params.ppo_reward_clip)
+        if reward_clip > 0.0:
+            rewards_t = rewards_t.clamp(-reward_clip, reward_clip)
+        expected_k = self.num_agents
+        if states.ndim != 2 or states.shape[0] != expected_k:
+            raise ValueError(f"Expected states [K,S] with K={expected_k}, got {tuple(states.shape)}")
+        if masks.ndim != 2 or masks.shape[0] != expected_k:
+            raise ValueError(f"Expected masks [K,A] with K={expected_k}, got {tuple(masks.shape)}")
+        if actions.shape != (expected_k,) or log_probs.shape != (expected_k,) or rewards_t.shape != (expected_k,):
+            raise ValueError(
+                f"Expected actions/log_probs/rewards [K], got {tuple(actions.shape)}, "
+                f"{tuple(log_probs.shape)}, {tuple(rewards_t.shape)}"
+            )
+        if not torch.isfinite(rewards_t).all():
+            print("[WARN] Non-finite rewards detected, skip joint timestep")
             return
-        scaled_reward = float(np.clip(scaled_reward, -10.0, 10.0))
-        self.buffer["s"].append(state.detach())
+        self.buffer["s"].append(states.detach())
         self.buffer["g"].append(global_state.detach().to(self.device))
-        self.buffer["a"].append(torch.tensor(action, device=self.device))
-        self.buffer["m"].append(mask.detach())
-        self.buffer["lp"].append(logp.detach())
-        self.buffer["r"].append(scaled_reward)
+        self.buffer["a"].append(actions.detach().to(self.device))
+        self.buffer["m"].append(masks.detach())
+        self.buffer["lp"].append(log_probs.detach())
+        self.buffer["r"].append(rewards_t.detach())
         self.buffer["t"].append(done)
+        self._last_next_global_state = next_global_state.detach().to(self.device)
+        self.environment_steps += 1
         if len(self.buffer["r"]) >= self.params.ppo_update_timestep:
             self.train_net()
 
     def train_net(self) -> None:
         if not self.buffer["r"]:
             return
-        rewards = torch.tensor(self.buffer["r"], dtype=torch.float32, device=self.device)
+        rewards = torch.stack(self.buffer["r"]).detach()
         dones = torch.tensor(self.buffer["t"], dtype=torch.float32, device=self.device)
         if not torch.isfinite(rewards).all():
             print("[WARN] Non-finite rewards detected, skip update")
@@ -625,59 +735,137 @@ class SharedMAPPO:
         old_a = torch.stack(self.buffer["a"]).detach()
         old_m = torch.stack(self.buffer["m"]).detach()
         old_lp = torch.stack(self.buffer["lp"]).detach()
+        time_steps, num_agents = rewards.shape
+        if num_agents != self.num_agents:
+            raise RuntimeError(f"Rollout agent dimension changed: expected {self.num_agents}, got {num_agents}")
+        if old_s.shape[:2] != (time_steps, num_agents) or old_m.shape[:2] != (time_steps, num_agents):
+            raise RuntimeError("MAPPO rollout lost its [time, agent] layout")
+        if old_a.shape != rewards.shape or old_lp.shape != rewards.shape:
+            raise RuntimeError(
+                f"MAPPO action/log-prob shape mismatch: actions={tuple(old_a.shape)}, "
+                f"old_logp={tuple(old_lp.shape)}, rewards={tuple(rewards.shape)}"
+            )
         if not (torch.isfinite(old_s).all() and torch.isfinite(old_g).all()):
             print("[WARN] Non-finite states detected, skip update")
             self.clear()
             return
         with torch.no_grad():
-            old_values = self.policy_old.critic(old_g).squeeze()
-        advantages = torch.zeros_like(rewards)
-        gae = 0.0
-        next_value = 0.0
-        for t in reversed(range(len(rewards))):
-            mask = 1.0 - dones[t]
-            delta = rewards[t] + (self.params.ppo_gamma * next_value * mask) - old_values[t]
-            gae = delta + (self.params.ppo_gamma * self.params.ppo_gae_lambda * mask * gae)
-            advantages[t] = gae
-            next_value = old_values[t]
-        returns = advantages + old_values
-        if advantages.std() > 0:
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-7)
-        batch_size = len(rewards)
+            old_values = self.policy_old.critic(old_g)
+            if bool(dones[-1].item()) or self._last_next_global_state is None:
+                bootstrap_values = torch.zeros(self.num_agents, dtype=torch.float32, device=self.device)
+            else:
+                bootstrap_values = self.policy_old.critic(self._last_next_global_state.unsqueeze(0)).squeeze(0)
+        advantages, returns = _compute_time_agent_gae(
+            rewards,
+            dones,
+            old_values,
+            bootstrap_values,
+            self.params.ppo_gamma,
+            self.params.ppo_gae_lambda,
+        )
+        advantage_std = advantages.std(unbiased=False)
+        if advantage_std > 0:
+            advantages = (advantages - advantages.mean()) / (advantage_std + 1e-7)
+        flat_s = old_s.reshape(time_steps * num_agents, *old_s.shape[2:])
+        flat_a = old_a.reshape(-1)
+        flat_m = old_m.reshape(time_steps * num_agents, *old_m.shape[2:])
+        flat_old_lp = old_lp.reshape(-1)
+        flat_advantages = advantages.reshape(-1)
+        flat_returns = returns.reshape(-1)
+        flat_old_values = old_values.reshape(-1)
+        batch_size = time_steps * num_agents
         mini_batch = min(self.params.ppo_minibatch_size, batch_size)
+        policy_losses: list[float] = []
+        value_losses: list[float] = []
+        entropies: list[float] = []
+        approx_kls: list[float] = []
+        clip_fractions: list[float] = []
+        actor_grad_norms: list[float] = []
+        critic_grad_norms: list[float] = []
         for _ in range(self.params.ppo_k_epochs):
             indices = torch.randperm(batch_size, device=self.device)
             for start in range(0, batch_size, mini_batch):
                 mb = indices[start : start + mini_batch]
-                logp, val, ent = self.policy.evaluate(old_s[mb], old_g[mb], old_a[mb], old_m[mb])
+                logp, ent = self.policy.evaluate_actor(
+                    flat_s[mb], flat_a[mb], flat_m[mb], self.params.ppo_random_action_prob
+                )
+                time_idx = torch.div(mb, num_agents, rounding_mode="floor")
+                agent_idx = torch.remainder(mb, num_agents)
+                all_values = self.policy.critic(old_g[time_idx])
+                val = all_values.gather(1, agent_idx.unsqueeze(1)).squeeze(1)
                 if not (torch.isfinite(logp).all() and torch.isfinite(val).all() and torch.isfinite(ent).all()):
                     print("[WARN] Non-finite policy outputs, skip minibatch")
                     continue
-                if not torch.isfinite(old_lp[mb]).all():
+                if not torch.isfinite(flat_old_lp[mb]).all():
                     print("[WARN] Non-finite old log-probs, skip minibatch")
                     continue
-                logp_diff = (logp - old_lp[mb]).clamp(-20.0, 20.0)
+                if logp.shape != flat_old_lp[mb].shape:
+                    raise RuntimeError(
+                        f"PPO log-prob shape mismatch: new={tuple(logp.shape)}, old={tuple(flat_old_lp[mb].shape)}"
+                    )
+                logp_diff = (logp - flat_old_lp[mb]).clamp(-20.0, 20.0)
                 ratio = torch.exp(logp_diff)
-                adv = advantages[mb]
+                if ratio.ndim != 1:
+                    raise RuntimeError(f"PPO ratio must be [B], got {tuple(ratio.shape)}")
+                adv = flat_advantages[mb]
                 if not torch.isfinite(adv).all():
                     print("[WARN] Non-finite advantages, skip minibatch")
                     continue
                 policy_loss = -torch.min(ratio * adv, torch.clamp(ratio, 1 - self.params.ppo_eps_clip, 1 + self.params.ppo_eps_clip) * adv).mean()
-                val = val.squeeze()
                 if self.params.ppo_value_clip > 0:
-                    v_old = old_values[mb]
+                    v_old = flat_old_values[mb]
                     v_clip = v_old + torch.clamp(val - v_old, -self.params.ppo_value_clip, self.params.ppo_value_clip)
-                    value_loss = 0.5 * torch.max((val - returns[mb]) ** 2, (v_clip - returns[mb]) ** 2).mean()
+                    value_loss = 0.5 * torch.max((val - flat_returns[mb]) ** 2, (v_clip - flat_returns[mb]) ** 2).mean()
                 else:
-                    value_loss = 0.5 * nn.MSELoss()(val, returns[mb])
-                loss = policy_loss + value_loss - (self.entropy_coef * ent.mean())
-                if not torch.isfinite(loss):
+                    value_loss = 0.5 * nn.MSELoss()(val, flat_returns[mb])
+                actor_loss = policy_loss - (self.entropy_coef * ent.mean())
+                critic_loss = value_loss
+                if not (torch.isfinite(actor_loss) and torch.isfinite(critic_loss)):
                     print("[WARN] Non-finite loss, skip minibatch")
                     continue
-                self.optimizer.zero_grad()
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=1.0)
-                self.optimizer.step()
+                self.actor_optimizer.zero_grad()
+                actor_loss.backward()
+                actor_grad_norm = torch.nn.utils.clip_grad_norm_(self.actor_parameters, max_norm=1.0)
+                self.actor_optimizer.step()
+                self.critic_optimizer.zero_grad()
+                critic_loss.backward()
+                critic_grad_norm = torch.nn.utils.clip_grad_norm_(self.critic_parameters, max_norm=1.0)
+                self.critic_optimizer.step()
+                with torch.no_grad():
+                    policy_losses.append(float(policy_loss.item()))
+                    value_losses.append(float(value_loss.item()))
+                    entropies.append(float(ent.mean().item()))
+                    approx_kls.append(float((flat_old_lp[mb] - logp).mean().item()))
+                    clip_fractions.append(
+                        float(((ratio - 1.0).abs() > self.params.ppo_eps_clip).float().mean().item())
+                    )
+                    actor_grad_norms.append(float(torch.as_tensor(actor_grad_norm).item()))
+                    critic_grad_norms.append(float(torch.as_tensor(critic_grad_norm).item()))
+        returns_var = torch.var(flat_returns, unbiased=False)
+        if float(returns_var.item()) > 1e-12:
+            explained_variance = 1.0 - float(
+                (torch.var(flat_returns - flat_old_values, unbiased=False) / returns_var).item()
+            )
+        else:
+            explained_variance = 0.0
+        if policy_losses:
+            self.update_history.append(
+                {
+                    "update": len(self.update_history) + 1,
+                    "environment_step": int(self.environment_steps),
+                    "rollout_steps": int(time_steps),
+                    "samples": int(batch_size),
+                    "policy_loss": float(np.mean(policy_losses)),
+                    "value_loss": float(np.mean(value_losses)),
+                    "entropy": float(np.mean(entropies)),
+                    "approx_kl": float(np.mean(approx_kls)),
+                    "clip_fraction": float(np.mean(clip_fractions)),
+                    "actor_grad_norm": float(np.mean(actor_grad_norms)),
+                    "critic_grad_norm": float(np.mean(critic_grad_norms)),
+                    "explained_variance_before_update": float(explained_variance),
+                    "entropy_coef": float(self.entropy_coef),
+                }
+            )
         self.entropy_coef = max(self.params.ppo_entropy_min, self.entropy_coef * self.params.ppo_entropy_decay)
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.clear()
@@ -685,6 +873,7 @@ class SharedMAPPO:
     def clear(self) -> None:
         for key in self.buffer:
             self.buffer[key] = []
+        self._last_next_global_state = None
 
 
 class PPOAgent:
@@ -889,13 +1078,92 @@ class PPOAgent:
         self._clamp_z_to_range()
         return state.detach().cpu().numpy(), action, (self.x, self.y, self.z_idx)
 
-    def update(self, reward: float, global_state: torch.Tensor) -> None:
+    def consume_transition(self) -> tuple[torch.Tensor, torch.Tensor, int, torch.Tensor]:
         if self.temp_s is None or self.temp_m is None or self.temp_a is None or self.temp_lp is None:
-            return
-        self.shared.store(self.temp_s, self.temp_m, self.temp_a, self.temp_lp, reward, global_state)
+            raise RuntimeError("Agent transition requested before a stochastic action was stored")
+        transition = (self.temp_s, self.temp_m, self.temp_a, self.temp_lp.squeeze())
+        self.temp_s = None
+        self.temp_m = None
+        self.temp_a = None
+        self.temp_lp = None
+        return transition
 
     def pose(self) -> list[float]:
         return [(self.x + 0.5) * self.geometry.grid_size, (self.y + 0.5) * self.geometry.grid_size, self.z, self.yaw, self.pitch]
+
+
+_AgentState = tuple[int, int, float, int, float, float]
+
+
+def _snapshot_agent_states(agents: Sequence[PPOAgent]) -> list[_AgentState]:
+    return [(ag.x, ag.y, ag.z, ag.z_idx, ag.yaw, ag.pitch) for ag in agents]
+
+
+def _restore_agent_states(agents: Sequence[PPOAgent], states: Sequence[_AgentState]) -> None:
+    if len(agents) != len(states):
+        raise ValueError(f"Agent state count mismatch: {len(agents)} agents, {len(states)} states")
+    for agent, state in zip(agents, states):
+        agent.x, agent.y, agent.z, agent.z_idx, agent.yaw, agent.pitch = state
+
+
+def _copy_optional_array(value: np.ndarray | None) -> np.ndarray | None:
+    return None if value is None else np.asarray(value, dtype=np.float32).copy()
+
+
+def _evaluate_deterministic_policy(
+    env: LegacyMAPPOEnv,
+    agents: Sequence[PPOAgent],
+    initial_states: Sequence[_AgentState],
+    steps: int,
+) -> tuple[np.ndarray, float, float]:
+    """Evaluate the current policy from a fixed start without changing training state."""
+    training_states = _snapshot_agent_states(agents)
+    saved_prev_score = float(env.prev_score)
+    saved_prev_uncovered = None if env._prev_uncovered_dists is None else env._prev_uncovered_dists.clone()
+    saved_centroid = _copy_optional_array(env.params.uncovered_centroid)
+    try:
+        _restore_agent_states(agents, initial_states)
+        env.prev_score = 0.0
+        env._prev_uncovered_dists = None
+        env.params.uncovered_centroid = (
+            np.mean(env.target_points_np[:, :2], axis=0).astype(np.float32)
+            if env.total_voxels > 0
+            else None
+        )
+        # Initialize the coverage-dependent hints for the fixed evaluation start.
+        env.calculate_reward(agents)
+        for _ in range(max(0, int(steps))):
+            for agent in agents:
+                agent.step(deterministic=True, store_buffer=False)
+            env.calculate_reward(agents)
+        positions = np.asarray([agent.pose() for agent in agents], dtype=np.float32)
+        coverage_pct, score = env.evaluate_positions(positions)
+        return positions, float(coverage_pct), float(score)
+    finally:
+        _restore_agent_states(agents, training_states)
+        env.prev_score = saved_prev_score
+        env._prev_uncovered_dists = saved_prev_uncovered
+        env.params.uncovered_centroid = saved_centroid
+
+
+def _is_better_candidate(candidate: _PoseCandidate, incumbent: _PoseCandidate | None) -> bool:
+    if incumbent is None:
+        return True
+    if candidate.coverage_pct > incumbent.coverage_pct + 1e-6:
+        return True
+    if abs(candidate.coverage_pct - incumbent.coverage_pct) <= 1e-6 and candidate.score > incumbent.score + 1e-6:
+        return True
+    return False
+
+
+def _select_best_candidate(candidates: Sequence[_PoseCandidate | None]) -> _PoseCandidate:
+    best: _PoseCandidate | None = None
+    for candidate in candidates:
+        if candidate is not None and _is_better_candidate(candidate, best):
+            best = candidate
+    if best is None:
+        raise RuntimeError("MAPPO produced no pose candidate")
+    return best
 
 
 def _allowed_yaws(wx: float, wy: float, geometry: MapGeometry, params: LegacyMAPPOParams) -> np.ndarray:
@@ -903,7 +1171,7 @@ def _allowed_yaws(wx: float, wy: float, geometry: MapGeometry, params: LegacyMAP
 
 
 def _optimize_yaws(env: LegacyMAPPOEnv, positions: np.ndarray) -> tuple[np.ndarray, float]:
-    pos = _ensure_positions_array(positions)
+    pos = _ensure_positions_array(positions).copy()
     if pos.size == 0:
         return pos, 0.0
     best_cov, _ = env.evaluate_positions(pos)
@@ -928,8 +1196,34 @@ def _optimize_yaws(env: LegacyMAPPOEnv, positions: np.ndarray) -> tuple[np.ndarr
     return pos, float(best_cov)
 
 
-def _save_train_log(path: Path, logs: dict[str, list[float] | list[int]]) -> None:
+def _save_train_log(
+    path: Path,
+    logs: dict[str, list[float] | list[int]],
+    update_history: Sequence[dict[str, float | int]] = (),
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    update_fields = (
+        "update",
+        "environment_step",
+        "rollout_steps",
+        "samples",
+        "policy_loss",
+        "value_loss",
+        "entropy",
+        "approx_kl",
+        "clip_fraction",
+        "actor_grad_norm",
+        "critic_grad_norm",
+        "explained_variance_before_update",
+        "entropy_coef",
+    )
+    update_arrays = {
+        f"ppo_{field}": np.asarray(
+            [record[field] for record in update_history],
+            dtype=np.int32 if field in {"update", "environment_step", "rollout_steps", "samples"} else np.float32,
+        )
+        for field in update_fields
+    }
     np.savez(
         path,
         episode=np.array(logs["episode"], dtype=np.int32),
@@ -951,6 +1245,7 @@ def _save_train_log(path: Path, logs: dict[str, list[float] | list[int]]) -> Non
         eval_episode=np.array(logs["eval_episode"], dtype=np.int32),
         eval_coverage=np.array(logs["eval_coverage"], dtype=np.float32),
         eval_score=np.array(logs["eval_score"], dtype=np.float32),
+        **update_arrays,
     )
 
 
@@ -960,9 +1255,29 @@ def _train_one_row(row: MappoPlanRow, config: ExperimentConfig) -> dict[str, Any
     torch.manual_seed(int(row.seed))
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(int(row.seed))
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
     params = _legacy_params(row, config)
     scenario = get_scenario(row.scenario_id)
+    base = config.results_dir / "mappo" / f"mappo_{row.lidar_profile.lower()}_{row.output_tag}_id{row.scenario_id}_k{row.budget_k}_t{row.trial}"
+    result_json_path = base.with_suffix(".json")
+    result_npy_path = base.with_suffix(".npy")
+    train_log_path = base.with_name(base.name + "_train_log.npz")
+    policy_checkpoint_path = base.with_name(base.name + "_policy.pt")
+    candidate_paths = {
+        "train_raw": base.with_name(base.name + "_train_raw.npy"),
+        "eval_raw": base.with_name(base.name + "_eval_raw.npy"),
+        "train_yaw_tuned": base.with_name(base.name + "_train_yaw_tuned.npy"),
+        "eval_yaw_tuned": base.with_name(base.name + "_eval_yaw_tuned.npy"),
+    }
+    artifacts = [result_json_path, result_npy_path, train_log_path, policy_checkpoint_path, *candidate_paths.values()]
+    existing = [path for path in artifacts if path.exists()]
+    if existing:
+        names = ", ".join(str(path) for path in existing)
+        raise FileExistsError(f"MAPPO output already exists; use a new tag/output root instead of mixing runs: {names}")
+
     env = LegacyMAPPOEnv(scenario, row.lidar_profile, config, params)
+    training_config_hash = _training_config_hash(row, params)
     valid_spawns = sum(env.quadrants, [])
     valid_spawns = _subsample_spawns_by_spacing(valid_spawns, env.geometry, params.xy_step_m)
     if not valid_spawns:
@@ -976,23 +1291,9 @@ def _train_one_row(row: MappoPlanRow, config: ExperimentConfig) -> dict[str, Any
     global_dim = state_dim * params.num_agents
     shared = SharedMAPPO(state_dim, ACTION_DIM, global_dim, params.local_map_size, params, env.device)
     agents = [PPOAgent(env, [spawn_points[i]], shared) for i in range(params.num_agents)]
-    base = config.results_dir / "mappo" / f"mappo_{row.lidar_profile.lower()}_{row.output_tag}_id{row.scenario_id}_k{row.budget_k}_t{row.trial}"
-    result_npy_path = base.with_suffix(".npy")
-    train_log_path = base.with_name(base.name + "_train_log.npz")
-    global_best_cov = -1.0
-    global_best_score = float("-inf")
-    if result_npy_path.exists():
-        try:
-            previous = np.load(result_npy_path)
-            global_best_cov, global_best_score = env.evaluate_positions(previous)
-        except Exception:
-            global_best_cov = -1.0
-            global_best_score = float("-inf")
-    best_cov = 0.0
-    best_positions: np.ndarray | None = None
-    best_saved_cov = float(global_best_cov)
-    best_saved_score = float(global_best_score)
-    best_eval_cov = -1.0
+    initial_agent_states = _snapshot_agent_states(agents)
+    best_train: _PoseCandidate | None = None
+    best_eval: _PoseCandidate | None = None
     logs: dict[str, list[float] | list[int]] = {
         "episode": [],
         "coverage": [],
@@ -1019,6 +1320,29 @@ def _train_one_row(row: MappoPlanRow, config: ExperimentConfig) -> dict[str, Any
     base_uncovered_move = float(params.w_uncovered_move)
     start_t = time.time()
     det: dict[str, float] = {"score": 0.0, "cov": 0.0}
+
+    def evaluate_policy(eval_episode: int) -> None:
+        nonlocal best_eval
+        eval_positions, eval_cov, eval_score = _evaluate_deterministic_policy(
+            env, agents, initial_agent_states, params.eval_steps
+        )
+        if logs["eval_episode"] and int(logs["eval_episode"][-1]) == int(eval_episode):
+            logs["eval_coverage"][-1] = float(eval_cov)
+            logs["eval_score"][-1] = float(eval_score)
+        else:
+            logs["eval_episode"].append(int(eval_episode))
+            logs["eval_coverage"].append(float(eval_cov))
+            logs["eval_score"].append(float(eval_score))
+        candidate = _PoseCandidate("eval_raw", eval_positions.copy(), eval_cov, eval_score)
+        if _is_better_candidate(candidate, best_eval):
+            best_eval = candidate
+            save_positions_npy(candidate_paths["eval_raw"], candidate.positions)
+            print(
+                f"Saved best deterministic policy evaluation @ Step {eval_episode} | "
+                f"Cov: {eval_cov:.2f}% | Score: {eval_score:.1f} -> {candidate_paths['eval_raw']}"
+            )
+        print(f"Eval Step {eval_episode} | Cov: {eval_cov:.2f}% | Score: {eval_score:.1f}")
+
     for ep in range(1, params.episodes + 1):
         g_states = []
         for ag in agents:
@@ -1028,8 +1352,21 @@ def _train_one_row(row: MappoPlanRow, config: ExperimentConfig) -> dict[str, Any
         for ag in agents:
             ag.step()
         team_reward, indiv_rewards, det = env.calculate_reward(agents)
-        for idx, ag in enumerate(agents):
-            ag.update(team_reward + float(indiv_rewards[idx]), g_vec)
+        transitions = [ag.consume_transition() for ag in agents]
+        next_g_vec = torch.cat([ag.get_state_and_mask()[0] for ag in agents])
+        shared.store_timestep(
+            states=torch.stack([transition[0] for transition in transitions]),
+            masks=torch.stack([transition[1] for transition in transitions]),
+            actions=torch.tensor([transition[2] for transition in transitions], dtype=torch.long, device=env.device),
+            log_probs=torch.stack([transition[3] for transition in transitions]),
+            rewards=np.asarray(
+                [team_reward + float(indiv_rewards[idx]) for idx in range(len(agents))],
+                dtype=np.float32,
+            ),
+            global_state=g_vec,
+            next_global_state=next_g_vec,
+            done=False,
+        )
         logs["episode"].append(ep)
         logs["coverage"].append(det["cov"])
         logs["score"].append(det["score"])
@@ -1045,16 +1382,19 @@ def _train_one_row(row: MappoPlanRow, config: ExperimentConfig) -> dict[str, Any
         logs["outward_penalty"].append(det.get("outward_penalty", 0.0))
         logs["marginal_gain"].append(det.get("marginal_gain", 0.0))
         logs["indiv_reward_mean"].append(float(np.mean(indiv_rewards)) if len(indiv_rewards) else 0.0)
-        if det["cov"] > best_cov:
-            best_cov = float(det["cov"])
-            best_positions = np.asarray([ag.pose() for ag in agents], dtype=np.float32)
-            if det["cov"] > global_best_cov + 1e-6:
-                save_positions_npy(result_npy_path, best_positions)
-                global_best_cov = float(det["cov"])
-                global_best_score = float(det["score"])
-                best_saved_cov = float(global_best_cov)
-                best_saved_score = float(global_best_score)
-                print(f"Saved best @ Ep {ep} | Cov: {det['cov']:.2f}% | Score: {det['score']:.1f} -> {result_npy_path}")
+        train_candidate = _PoseCandidate(
+            "train_raw",
+            np.asarray([ag.pose() for ag in agents], dtype=np.float32),
+            float(det["cov"]),
+            float(det["score"]),
+        )
+        if _is_better_candidate(train_candidate, best_train):
+            best_train = train_candidate
+            save_positions_npy(candidate_paths["train_raw"], train_candidate.positions)
+            print(
+                f"Saved best stochastic training pose @ Step {ep} | Cov: {det['cov']:.2f}% | "
+                f"Score: {det['score']:.1f} -> {candidate_paths['train_raw']}"
+            )
             plateau_count = 0
             if plateau_active:
                 params.w_uncovered_move = base_uncovered_move
@@ -1066,27 +1406,8 @@ def _train_one_row(row: MappoPlanRow, config: ExperimentConfig) -> dict[str, Any
                 params.w_uncovered_move = base_uncovered_move * params.plateau_uncovered_scale
                 shared.entropy_coef = base_entropy_coef * params.plateau_entropy_scale
                 plateau_active = True
-        if params.eval_interval > 0 and ep % params.eval_interval == 0:
-            saved_states = [(ag.x, ag.y, ag.z, ag.z_idx, ag.yaw, ag.pitch) for ag in agents]
-            for _ in range(max(0, params.eval_steps)):
-                for ag in agents:
-                    ag.step(deterministic=True, store_buffer=False)
-            eval_positions = np.asarray([ag.pose() for ag in agents], dtype=np.float32)
-            eval_cov, eval_score = env.evaluate_positions(eval_positions)
-            logs["eval_episode"].append(ep)
-            logs["eval_coverage"].append(float(eval_cov))
-            logs["eval_score"].append(float(eval_score))
-            best_eval_cov = max(best_eval_cov, float(eval_cov))
-            if eval_cov > global_best_cov + 1e-6:
-                save_positions_npy(result_npy_path, eval_positions)
-                global_best_cov = float(eval_cov)
-                global_best_score = float(eval_score)
-                best_saved_cov = float(global_best_cov)
-                best_saved_score = float(global_best_score)
-                print(f"Saved best (eval) @ Ep {ep} | Cov: {eval_cov:.2f}% | Score: {eval_score:.1f} -> {result_npy_path}")
-            print(f"Eval Ep {ep} | Cov: {eval_cov:.2f}% | Score: {eval_score:.1f}")
-            for ag, st in zip(agents, saved_states):
-                ag.x, ag.y, ag.z, ag.z_idx, ag.yaw, ag.pitch = st
+        if params.eval_interval > 0 and ep % params.eval_interval == 0 and ep < params.episodes:
+            evaluate_policy(ep)
         if params.print_interval > 0 and ep % params.print_interval == 0:
             print(
                 f"Ep {ep} | Cov: {det['cov']:.2f}% | Score: {det['score']:.1f} | "
@@ -1097,31 +1418,74 @@ def _train_one_row(row: MappoPlanRow, config: ExperimentConfig) -> dict[str, Any
                 f"uncov={det.get('uncovered_bonus', 0.0):.2f}, out={det.get('outward_penalty', 0.0):.2f}, "
                 f"mg={det.get('marginal_gain', 0.0):.2f} | Time: {time.time() - start_t:.0f}s"
             )
-            _save_train_log(train_log_path, logs)
+            _save_train_log(train_log_path, logs, shared.update_history)
             if ep % 500 == 0:
                 gc.collect()
     shared.train_net()
-    if best_positions is None:
-        best_positions = np.asarray([ag.pose() for ag in agents], dtype=np.float32)
-    tuned_positions, tuned_cov = _optimize_yaws(env, best_positions)
-    if tuned_positions.size > 0:
-        if tuned_cov > global_best_cov + 1e-6:
-            tuned_score = env.evaluate_positions(tuned_positions)[1]
-            save_positions_npy(result_npy_path, tuned_positions)
-            global_best_cov = float(tuned_cov)
-            global_best_score = float(tuned_score)
-            best_saved_cov = float(global_best_cov)
-            best_saved_score = float(global_best_score)
-            print(f"Saved best (yaw-tuned) | Cov: {tuned_cov:.2f}% -> {result_npy_path}")
-        best_cov = max(float(best_cov), float(tuned_cov))
-    if not result_npy_path.exists():
-        save_positions_npy(result_npy_path, tuned_positions if tuned_positions.size else best_positions)
-    final_positions = np.asarray(np.load(result_npy_path), dtype=np.float32)
-    _save_train_log(train_log_path, logs)
+    if params.eval_interval > 0:
+        # The periodic evaluation at the last step precedes the residual PPO update.
+        evaluate_policy(params.episodes)
+    if best_train is None:
+        fallback_positions = np.asarray([ag.pose() for ag in agents], dtype=np.float32)
+        fallback_cov, fallback_score = env.evaluate_positions(fallback_positions)
+        best_train = _PoseCandidate("train_raw", fallback_positions, fallback_cov, fallback_score)
+        save_positions_npy(candidate_paths["train_raw"], best_train.positions)
+
+    tuned_candidates: list[_PoseCandidate] = []
+    for raw_candidate, tuned_source in (
+        (best_train, "train_yaw_tuned"),
+        (best_eval, "eval_yaw_tuned"),
+    ):
+        if raw_candidate is None:
+            continue
+        tuned_positions, tuned_cov = _optimize_yaws(env, raw_candidate.positions)
+        _, tuned_score = env.evaluate_positions(tuned_positions)
+        tuned_candidate = _PoseCandidate(
+            tuned_source,
+            tuned_positions,
+            float(tuned_cov),
+            float(tuned_score),
+            postprocessed=True,
+        )
+        tuned_candidates.append(tuned_candidate)
+        save_positions_npy(candidate_paths[tuned_source], tuned_candidate.positions)
+
+    train_tuned = next((candidate for candidate in tuned_candidates if candidate.source == "train_yaw_tuned"), None)
+    eval_tuned = next((candidate for candidate in tuned_candidates if candidate.source == "eval_yaw_tuned"), None)
+    # Raw candidates come first, so equal-quality solutions are not attributed to postprocessing.
+    final_candidate = _select_best_candidate([best_eval, best_train, eval_tuned, train_tuned])
+    final_positions = final_candidate.positions.copy()
+    save_positions_npy(result_npy_path, final_positions)
+    _save_train_log(train_log_path, logs, shared.update_history)
     evaluation = evaluate_coverage(final_positions, scenario, row.lidar_profile, config)
+    if abs(float(evaluation.coverage_pct) - float(final_candidate.coverage_pct)) > 1e-4:
+        raise RuntimeError(
+            "MAPPO internal and shared coverage evaluators disagree: "
+            f"{final_candidate.coverage_pct:.6f}% vs {evaluation.coverage_pct:.6f}%"
+        )
     profile = get_lidar_profile(row.lidar_profile, config)
     config_hash = compute_config_hash(config, scenario, profile)
-    npy_path = save_positions_npy(result_npy_path, final_positions)
+    policy_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "format_version": 1,
+            "policy_state_dict": shared.policy_old.state_dict(),
+            "entropy_coef": float(shared.entropy_coef),
+            "state_dim": int(state_dim),
+            "action_dim": int(ACTION_DIM),
+            "global_dim": int(global_dim),
+            "local_map_size": int(params.local_map_size),
+            "num_agents": int(params.num_agents),
+            "scenario_id": int(row.scenario_id),
+            "budget_k": int(row.budget_k),
+            "trial": int(row.trial),
+            "seed": int(row.seed),
+            "training_steps": int(row.episodes),
+            "config_hash": config_hash,
+            "training_config_hash": training_config_hash,
+        },
+        policy_checkpoint_path,
+    )
     record = build_result_record(
         method="MAPPO",
         scenario_id=row.scenario_id,
@@ -1134,7 +1498,7 @@ def _train_one_row(row: MappoPlanRow, config: ExperimentConfig) -> dict[str, Any
         candidate_mode=f"legacy_grid_xy{config.xy_step_m}_yaw{config.yaw_step_deg}_pitch{config.pitch_step_deg}",
         action_space="legacy_11_action_grid_move_yaw_pitch_z_mappo",
         num_selected=len(final_positions),
-        positions_npy=str(npy_path),
+        positions_npy=str(result_npy_path),
         coverage_pct=evaluation.coverage_pct,
         coverage_ratio=evaluation.coverage_ratio,
         covered_count=evaluation.covered_count,
@@ -1147,16 +1511,40 @@ def _train_one_row(row: MappoPlanRow, config: ExperimentConfig) -> dict[str, Any
         cache_key=evaluation.cache_key,
         train_log_npz=str(train_log_path),
         extra={
-            "trainer": "legacy_mappo_native_port",
+            "trainer": "mappo_native_port_rollout_v3",
+            "rollout_layout": "time_agent",
+            "training_steps": int(row.episodes),
+            "training_config_hash": training_config_hash,
+            "ppo_updates": int(len(shared.update_history)),
+            "ppo_lr": float(params.ppo_lr),
+            "ppo_update_timestep": int(params.ppo_update_timestep),
+            "ppo_reward_scale": float(params.ppo_reward_scale),
+            "ppo_reward_clip": float(params.ppo_reward_clip),
             "legacy_action_dim": ACTION_DIM,
-            "best_train_coverage_pct": float(best_cov),
-            "best_eval_coverage_pct": float(best_eval_cov) if best_eval_cov >= 0 else None,
-            "best_internal_saved_coverage_pct": float(best_saved_cov),
-            "best_internal_saved_score": float(best_saved_score) if np.isfinite(best_saved_score) else None,
+            "result_semantics": "best_seen_deployment_pose_not_policy_return",
+            "reported_solution_source": final_candidate.source,
+            "reported_solution_postprocessed": bool(final_candidate.postprocessed),
+            "policy_evaluation_start": "fixed_initial_pose",
+            "policy_evaluation_steps": int(params.eval_steps),
+            "best_train_coverage_pct": float(best_train.coverage_pct),
+            "best_eval_coverage_pct": float(best_eval.coverage_pct) if best_eval is not None else None,
+            "best_train_raw_coverage_pct": float(best_train.coverage_pct),
+            "best_train_raw_score": float(best_train.score),
+            "best_eval_raw_coverage_pct": float(best_eval.coverage_pct) if best_eval is not None else None,
+            "best_eval_raw_score": float(best_eval.score) if best_eval is not None else None,
+            "best_train_yaw_tuned_coverage_pct": float(train_tuned.coverage_pct) if train_tuned is not None else None,
+            "best_eval_yaw_tuned_coverage_pct": float(eval_tuned.coverage_pct) if eval_tuned is not None else None,
+            "best_internal_saved_coverage_pct": float(final_candidate.coverage_pct),
+            "best_internal_saved_score": float(final_candidate.score),
+            "train_raw_positions_npy": str(candidate_paths["train_raw"]),
+            "eval_raw_positions_npy": str(candidate_paths["eval_raw"]) if best_eval is not None else None,
+            "train_yaw_tuned_positions_npy": str(candidate_paths["train_yaw_tuned"]),
+            "eval_yaw_tuned_positions_npy": str(candidate_paths["eval_yaw_tuned"]) if eval_tuned is not None else None,
+            "policy_checkpoint": str(policy_checkpoint_path),
             "created_at": datetime.now().isoformat(timespec="seconds"),
         },
     )
-    save_result_json(base.with_suffix(".json"), record)
+    save_result_json(result_json_path, record)
     return record
 
 

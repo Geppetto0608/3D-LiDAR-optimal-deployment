@@ -132,6 +132,13 @@ def cmd_full(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="LiDAR placement experiment CLI.")
     sub = parser.add_subparsers(dest="command", required=True)
+    from src.application import run as run_application
+    for application in ('roadside', 'robot'):
+        app = sub.add_parser(application)
+        app.add_argument('--config', required=True)
+        app.add_argument('--dry-run', action='store_true')
+        app.add_argument('--result-json', default=None)
+        app.set_defaults(func=run_application)
 
     def common(p, *, include_tag: bool = True):
         p.add_argument("--config", default="configs/experiment.yaml")

@@ -7,3 +7,6 @@ pulp
 gurobipy
 torch
 open3d
+plotly
+python-pptx
+Flask>=3,<4

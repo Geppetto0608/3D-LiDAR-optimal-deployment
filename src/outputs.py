@@ -126,6 +126,7 @@ def _comparison_row(record: dict[str, Any]) -> dict[str, Any]:
     method = record.get("method")
     frontier = record.get("frontier_coverage_pct", record.get("coverage_pct"))
     raw = record.get("raw_coverage_pct", record.get("coverage_pct"))
+    extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
     return {
         "scenario_id": record.get("scenario_id"),
         "topology": record.get("topology"),
@@ -141,6 +142,11 @@ def _comparison_row(record: dict[str, Any]) -> dict[str, Any]:
         "result_file": record.get("positions_npy"),
         "solver_status": record.get("solver_status"),
         "mip_gap": record.get("mip_gap"),
+        "mappo_train_raw_coverage_pct": extra.get("best_train_raw_coverage_pct"),
+        "mappo_policy_eval_coverage_pct": extra.get("best_eval_raw_coverage_pct"),
+        "mappo_train_yaw_tuned_coverage_pct": extra.get("best_train_yaw_tuned_coverage_pct"),
+        "mappo_eval_yaw_tuned_coverage_pct": extra.get("best_eval_yaw_tuned_coverage_pct"),
+        "mappo_solution_source": extra.get("reported_solution_source"),
     }
 
 
@@ -159,6 +165,16 @@ def collect_comparison_rows(config: ExperimentConfig, *, mappo_tag: str | None =
     for key, group in grouped.items():
         covs = [float(g["coverage_pct"]) for g in group if g.get("coverage_pct") not in (None, "")]
         if covs:
+            policy_covs = [
+                float(g["mappo_policy_eval_coverage_pct"])
+                for g in group
+                if g.get("mappo_policy_eval_coverage_pct") not in (None, "")
+            ]
+            train_raw_covs = [
+                float(g["mappo_train_raw_coverage_pct"])
+                for g in group
+                if g.get("mappo_train_raw_coverage_pct") not in (None, "")
+            ]
             rows.append(
                 {
                     "scenario_id": key[0],
@@ -173,6 +189,11 @@ def collect_comparison_rows(config: ExperimentConfig, *, mappo_tag: str | None =
                     "mappo_tag": mappo_tag or group[0].get("mappo_tag"),
                     "result_file": "",
                     "std_coverage_pct": pstdev(covs) if len(covs) > 1 else 0.0,
+                    "mappo_train_raw_coverage_pct": mean(train_raw_covs) if train_raw_covs else "",
+                    "mappo_policy_eval_coverage_pct": mean(policy_covs) if policy_covs else "",
+                    "mappo_policy_eval_std_coverage_pct": (
+                        pstdev(policy_covs) if len(policy_covs) > 1 else (0.0 if policy_covs else "")
+                    ),
                 }
             )
     return rows
@@ -230,6 +251,12 @@ def build_comparison(
         "raw_coverage_pct",
         "solver_status",
         "mip_gap",
+        "mappo_train_raw_coverage_pct",
+        "mappo_policy_eval_coverage_pct",
+        "mappo_policy_eval_std_coverage_pct",
+        "mappo_train_yaw_tuned_coverage_pct",
+        "mappo_eval_yaw_tuned_coverage_pct",
+        "mappo_solution_source",
         "result_file",
     ]
     with output.open("w", newline="", encoding="utf-8") as f:
@@ -267,4 +294,3 @@ def plot_frontier(csv_path: str | Path, output_png: str | Path) -> Path:
     fig.savefig(out)
     plt.close(fig)
     return out
-
