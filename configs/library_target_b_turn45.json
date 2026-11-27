@@ -1,0 +1,4 @@
+{
+  "geometry": {"length_m": 160, "road_width_m": 10, "turn_deg": 45, "bend_length_m": 32, "mesh_step_m": 2},
+  "modules": 2
+}

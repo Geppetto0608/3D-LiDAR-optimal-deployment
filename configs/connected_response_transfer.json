@@ -1,0 +1,19 @@
+{
+  "schema": "connected_response_transfer_v1",
+  "query_budgets": [1, 2, 4],
+  "sources": [
+    {"name": "straight", "road_width_m": 10, "turn_deg": 0, "bend_length_m": 0},
+    {"name": "left70", "road_width_m": 10, "turn_deg": -70, "bend_length_m": 22},
+    {"name": "right70", "road_width_m": 10, "turn_deg": 70, "bend_length_m": 22},
+    {"name": "left85", "road_width_m": 12, "turn_deg": -85, "bend_length_m": 26},
+    {"name": "right85", "road_width_m": 12, "turn_deg": 85, "bend_length_m": 26}
+  ],
+  "targets": [
+    {"name": "w9_left40_b18", "road_width_m": 9, "turn_deg": -40, "bend_length_m": 18},
+    {"name": "w9_right40_b18", "road_width_m": 9, "turn_deg": 40, "bend_length_m": 18},
+    {"name": "w11_left65_b22", "road_width_m": 11, "turn_deg": -65, "bend_length_m": 22},
+    {"name": "w11_right65_b22", "road_width_m": 11, "turn_deg": 65, "bend_length_m": 22},
+    {"name": "w13_left80_b27", "road_width_m": 13, "turn_deg": -80, "bend_length_m": 27},
+    {"name": "w13_right80_b27", "road_width_m": 13, "turn_deg": 80, "bend_length_m": 27}
+  ]
+}

@@ -1,0 +1,661 @@
+{
+  "schema": "library_mechanism_v1",
+  "targets": [
+    {
+      "name": "target_a_t_junction_l120",
+      "track": "A",
+      "topology": "T_JUNCTION",
+      "size_m": 120.0,
+      "width_m": 10.0,
+      "center_fraction": [
+        0.42,
+        0.55
+      ],
+      "seed": 2000
+    },
+    {
+      "name": "target_a_t_junction_l180",
+      "track": "A",
+      "topology": "T_JUNCTION",
+      "size_m": 180.0,
+      "width_m": 14.0,
+      "center_fraction": [
+        0.57,
+        0.43
+      ],
+      "seed": 2001
+    },
+    {
+      "name": "target_a_cross_l120",
+      "track": "A",
+      "topology": "CROSS",
+      "size_m": 120.0,
+      "width_m": 10.0,
+      "center_fraction": [
+        0.55,
+        0.42
+      ],
+      "seed": 2002
+    },
+    {
+      "name": "target_a_cross_l180",
+      "track": "A",
+      "topology": "CROSS",
+      "size_m": 180.0,
+      "width_m": 14.0,
+      "center_fraction": [
+        0.43,
+        0.57
+      ],
+      "seed": 2003
+    },
+    {
+      "name": "target_b_l160",
+      "track": "B",
+      "length_m": 160.0,
+      "width_m": 10.0,
+      "turn_deg": 15.0,
+      "modules": 2,
+      "seed": 2004
+    },
+    {
+      "name": "target_b_l240",
+      "track": "B",
+      "length_m": 240.0,
+      "width_m": 14.0,
+      "turn_deg": 30.0,
+      "modules": 3,
+      "seed": 2005
+    },
+    {
+      "name": "target_b_l320",
+      "track": "B",
+      "length_m": 320.0,
+      "width_m": 10.0,
+      "turn_deg": 60.0,
+      "modules": 4,
+      "seed": 2006
+    },
+    {
+      "name": "target_b_l480",
+      "track": "B",
+      "length_m": 480.0,
+      "width_m": 14.0,
+      "turn_deg": 75.0,
+      "modules": 6,
+      "seed": 2007
+    }
+  ],
+  "sampling": {
+    "installation_step_m": 4.0,
+    "heights_m": [
+      3.0,
+      5.0
+    ],
+    "relative_yaws_deg": [
+      -45.0,
+      -22.5,
+      0.0,
+      22.5,
+      45.0
+    ],
+    "pitches_deg": [
+      -20.0,
+      -10.0
+    ],
+    "target_heights_m": [
+      1.0,
+      1.5,
+      2.0
+    ],
+    "target_b_step_m": 1.0
+  },
+  "target_k": {
+    "target_a_t_junction_l120": [
+      2,
+      3,
+      4
+    ],
+    "target_a_t_junction_l180": [
+      2,
+      3,
+      4
+    ],
+    "target_a_cross_l120": [
+      2,
+      3,
+      4
+    ],
+    "target_a_cross_l180": [
+      2,
+      3,
+      4
+    ],
+    "target_b_l160": [
+      3,
+      4,
+      6
+    ],
+    "target_b_l240": [
+      3,
+      4,
+      6
+    ],
+    "target_b_l320": [
+      3,
+      4,
+      6
+    ],
+    "target_b_l480": [
+      6,
+      8
+    ]
+  },
+  "query_budget": 256,
+  "random_seeds": [
+    0,
+    1,
+    2
+  ],
+  "source_count": 3,
+  "alternatives": 12,
+  "scene_levels": [
+    "mixed",
+    "dense"
+  ],
+  "requirements": {
+    "overlap_ratio": 0.0,
+    "critical_overlap_ratio": 0.0,
+    "min_separation_m": 4.0
+  },
+  "cost_model": {
+    "base": 1.0,
+    "per_height_m": 0.1,
+    "per_service_distance_m": 0.008,
+    "reference_height_m": 3.0,
+    "corridor_hub_spacing_m": 160.0
+  },
+  "profiles": {
+    "base": {
+      "cost_per_k": null,
+      "critical_coverage_ratio": 0.0
+    },
+    "cost": {
+      "cost_per_k": 1.25,
+      "critical_coverage_ratio": 0.0
+    },
+    "cost_critical60": {
+      "cost_per_k": 1.25,
+      "critical_coverage_ratio": 0.6
+    },
+    "cost_critical80": {
+      "cost_per_k": 1.25,
+      "critical_coverage_ratio": 0.8
+    }
+  },
+  "optimization": {
+    "reference_seconds": 1800.0,
+    "arm_seconds": 300.0,
+    "surrogate_seconds": 15.0,
+    "gap": 0.01,
+    "min_seconds": 300.0,
+    "stagnation_seconds": 120.0,
+    "threads": 1,
+    "soft_memory_gb": 24.0
+  },
+  "execution": {
+    "workers": 2,
+    "hard_wall_hours": 240.0,
+    "job_wall_hours": 48.0,
+    "min_free_ram_gib": 48.0,
+    "min_free_disk_gib": 12.0,
+    "max_job_rss_gib": 40.0,
+    "max_total_rss_gib": 80.0
+  },
+  "split": {
+    "schema": "library_mechanism_split_v1",
+    "sources": [
+      {
+        "name": "a_t_junction_l100_w8",
+        "track": "A",
+        "topology": "T_JUNCTION",
+        "size_m": 100.0,
+        "width_m": 8.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1000
+      },
+      {
+        "name": "a_t_junction_l100_w12",
+        "track": "A",
+        "topology": "T_JUNCTION",
+        "size_m": 100.0,
+        "width_m": 12.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1001
+      },
+      {
+        "name": "a_t_junction_l100_w16",
+        "track": "A",
+        "topology": "T_JUNCTION",
+        "size_m": 100.0,
+        "width_m": 16.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1002
+      },
+      {
+        "name": "a_t_junction_l160_w8",
+        "track": "A",
+        "topology": "T_JUNCTION",
+        "size_m": 160.0,
+        "width_m": 8.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1003
+      },
+      {
+        "name": "a_t_junction_l160_w12",
+        "track": "A",
+        "topology": "T_JUNCTION",
+        "size_m": 160.0,
+        "width_m": 12.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1004
+      },
+      {
+        "name": "a_t_junction_l160_w16",
+        "track": "A",
+        "topology": "T_JUNCTION",
+        "size_m": 160.0,
+        "width_m": 16.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1005
+      },
+      {
+        "name": "a_cross_l100_w8",
+        "track": "A",
+        "topology": "CROSS",
+        "size_m": 100.0,
+        "width_m": 8.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1006
+      },
+      {
+        "name": "a_cross_l100_w12",
+        "track": "A",
+        "topology": "CROSS",
+        "size_m": 100.0,
+        "width_m": 12.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1007
+      },
+      {
+        "name": "a_cross_l100_w16",
+        "track": "A",
+        "topology": "CROSS",
+        "size_m": 100.0,
+        "width_m": 16.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1008
+      },
+      {
+        "name": "a_cross_l160_w8",
+        "track": "A",
+        "topology": "CROSS",
+        "size_m": 160.0,
+        "width_m": 8.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1009
+      },
+      {
+        "name": "a_cross_l160_w12",
+        "track": "A",
+        "topology": "CROSS",
+        "size_m": 160.0,
+        "width_m": 12.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1010
+      },
+      {
+        "name": "a_cross_l160_w16",
+        "track": "A",
+        "topology": "CROSS",
+        "size_m": 160.0,
+        "width_m": 16.0,
+        "center_fraction": [
+          0.5,
+          0.5
+        ],
+        "seed": 1011
+      },
+      {
+        "name": "b_l80_w8_t0",
+        "track": "B",
+        "length_m": 80.0,
+        "width_m": 8.0,
+        "turn_deg": 0.0,
+        "modules": 2,
+        "seed": 1012
+      },
+      {
+        "name": "b_l80_w8_t45",
+        "track": "B",
+        "length_m": 80.0,
+        "width_m": 8.0,
+        "turn_deg": 45.0,
+        "modules": 2,
+        "seed": 1013
+      },
+      {
+        "name": "b_l80_w12_t0",
+        "track": "B",
+        "length_m": 80.0,
+        "width_m": 12.0,
+        "turn_deg": 0.0,
+        "modules": 2,
+        "seed": 1014
+      },
+      {
+        "name": "b_l80_w12_t45",
+        "track": "B",
+        "length_m": 80.0,
+        "width_m": 12.0,
+        "turn_deg": 45.0,
+        "modules": 2,
+        "seed": 1015
+      },
+      {
+        "name": "b_l80_w16_t0",
+        "track": "B",
+        "length_m": 80.0,
+        "width_m": 16.0,
+        "turn_deg": 0.0,
+        "modules": 2,
+        "seed": 1016
+      },
+      {
+        "name": "b_l80_w16_t45",
+        "track": "B",
+        "length_m": 80.0,
+        "width_m": 16.0,
+        "turn_deg": 45.0,
+        "modules": 2,
+        "seed": 1017
+      },
+      {
+        "name": "b_l120_w8_t0",
+        "track": "B",
+        "length_m": 120.0,
+        "width_m": 8.0,
+        "turn_deg": 0.0,
+        "modules": 2,
+        "seed": 1018
+      },
+      {
+        "name": "b_l120_w8_t45",
+        "track": "B",
+        "length_m": 120.0,
+        "width_m": 8.0,
+        "turn_deg": 45.0,
+        "modules": 2,
+        "seed": 1019
+      },
+      {
+        "name": "b_l120_w12_t0",
+        "track": "B",
+        "length_m": 120.0,
+        "width_m": 12.0,
+        "turn_deg": 0.0,
+        "modules": 2,
+        "seed": 1020
+      },
+      {
+        "name": "b_l120_w12_t45",
+        "track": "B",
+        "length_m": 120.0,
+        "width_m": 12.0,
+        "turn_deg": 45.0,
+        "modules": 2,
+        "seed": 1021
+      },
+      {
+        "name": "b_l120_w16_t0",
+        "track": "B",
+        "length_m": 120.0,
+        "width_m": 16.0,
+        "turn_deg": 0.0,
+        "modules": 2,
+        "seed": 1022
+      },
+      {
+        "name": "b_l120_w16_t45",
+        "track": "B",
+        "length_m": 120.0,
+        "width_m": 16.0,
+        "turn_deg": 45.0,
+        "modules": 2,
+        "seed": 1023
+      }
+    ],
+    "development": [
+      {
+        "name": "target_a_t_junction_l120",
+        "track": "A",
+        "topology": "T_JUNCTION",
+        "size_m": 120.0,
+        "width_m": 10.0,
+        "center_fraction": [
+          0.42,
+          0.55
+        ],
+        "seed": 2000
+      },
+      {
+        "name": "target_a_t_junction_l180",
+        "track": "A",
+        "topology": "T_JUNCTION",
+        "size_m": 180.0,
+        "width_m": 14.0,
+        "center_fraction": [
+          0.57,
+          0.43
+        ],
+        "seed": 2001
+      },
+      {
+        "name": "target_a_cross_l120",
+        "track": "A",
+        "topology": "CROSS",
+        "size_m": 120.0,
+        "width_m": 10.0,
+        "center_fraction": [
+          0.55,
+          0.42
+        ],
+        "seed": 2002
+      },
+      {
+        "name": "target_a_cross_l180",
+        "track": "A",
+        "topology": "CROSS",
+        "size_m": 180.0,
+        "width_m": 14.0,
+        "center_fraction": [
+          0.43,
+          0.57
+        ],
+        "seed": 2003
+      },
+      {
+        "name": "target_b_l160",
+        "track": "B",
+        "length_m": 160.0,
+        "width_m": 10.0,
+        "turn_deg": 15.0,
+        "modules": 2,
+        "seed": 2004
+      },
+      {
+        "name": "target_b_l240",
+        "track": "B",
+        "length_m": 240.0,
+        "width_m": 14.0,
+        "turn_deg": 30.0,
+        "modules": 3,
+        "seed": 2005
+      },
+      {
+        "name": "target_b_l320",
+        "track": "B",
+        "length_m": 320.0,
+        "width_m": 10.0,
+        "turn_deg": 60.0,
+        "modules": 4,
+        "seed": 2006
+      },
+      {
+        "name": "target_b_l480",
+        "track": "B",
+        "length_m": 480.0,
+        "width_m": 14.0,
+        "turn_deg": 75.0,
+        "modules": 6,
+        "seed": 2007
+      }
+    ],
+    "reserved": [
+      {
+        "name": "reserved_a_t_junction_l140",
+        "track": "A",
+        "topology": "T_JUNCTION",
+        "size_m": 140.0,
+        "width_m": 9.0,
+        "center_fraction": [
+          0.38,
+          0.59
+        ],
+        "seed": 7000
+      },
+      {
+        "name": "reserved_a_t_junction_l200",
+        "track": "A",
+        "topology": "T_JUNCTION",
+        "size_m": 200.0,
+        "width_m": 13.0,
+        "center_fraction": [
+          0.61,
+          0.39
+        ],
+        "seed": 7001
+      },
+      {
+        "name": "reserved_a_cross_l140",
+        "track": "A",
+        "topology": "CROSS",
+        "size_m": 140.0,
+        "width_m": 9.0,
+        "center_fraction": [
+          0.38,
+          0.59
+        ],
+        "seed": 7002
+      },
+      {
+        "name": "reserved_a_cross_l200",
+        "track": "A",
+        "topology": "CROSS",
+        "size_m": 200.0,
+        "width_m": 13.0,
+        "center_fraction": [
+          0.61,
+          0.39
+        ],
+        "seed": 7003
+      },
+      {
+        "name": "reserved_b_l200",
+        "track": "B",
+        "length_m": 200.0,
+        "width_m": 9.0,
+        "turn_deg": 22.5,
+        "modules": 3,
+        "seed": 7004
+      },
+      {
+        "name": "reserved_b_l280",
+        "track": "B",
+        "length_m": 280.0,
+        "width_m": 13.0,
+        "turn_deg": 37.5,
+        "modules": 4,
+        "seed": 7005
+      },
+      {
+        "name": "reserved_b_l360",
+        "track": "B",
+        "length_m": 360.0,
+        "width_m": 9.0,
+        "turn_deg": 67.5,
+        "modules": 5,
+        "seed": 7006
+      },
+      {
+        "name": "reserved_b_l520",
+        "track": "B",
+        "length_m": 520.0,
+        "width_m": 13.0,
+        "turn_deg": 82.5,
+        "modules": 7,
+        "seed": 7007
+      }
+    ]
+  },
+  "ablation": {
+    "source_counts": [
+      1,
+      3,
+      6
+    ],
+    "alternative_counts": [
+      1,
+      12
+    ],
+    "random_source_seeds": [
+      0,
+      1,
+      2
+    ],
+    "fill_policy": "geometry_union"
+  }
+}

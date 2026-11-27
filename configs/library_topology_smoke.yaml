@@ -1,0 +1,29 @@
+# Explicit coarse source domain for storage/raycast validation, not a benchmark.
+lidar_profile: VELODYNE64_R30
+scenario_ids: [1]
+k_values: [1, 2, 3]
+experiment_tag: library_topology_smoke
+
+candidate:
+  xy_domain: bin_representatives
+  xy_step_m: 10.0
+  z_min: 3.0
+  z_max: 3.0
+  z_step: 1.0
+  yaw_step_deg: 5.0
+  yaw_axis_min_deg: 90.0
+  yaw_axis_max_deg: 90.0
+  pitch_min_deg: -10.0
+  pitch_max_deg: -10.0
+  pitch_step_deg: 2.5
+  max_orientations_per_position: 0
+
+target:
+  coverage_z_slices: [1.5]
+  road_detection: 1
+
+lidar_profiles:
+  VELODYNE64_R30:
+    h_fov_deg: 360.0
+    v_fov_deg: 26.9
+    max_range_m: 30.0

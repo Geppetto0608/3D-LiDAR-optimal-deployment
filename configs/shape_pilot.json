@@ -1,0 +1,10 @@
+{
+  "schema": "axis_aligned_shape_pilot_v1",
+  "split": "development",
+  "scenarios": [
+    {"id": 400001, "name": "t_left", "provenance": "synthetic_junction_offset", "parent_scenario_id": 1, "topology": "T_JUNCTION", "road_width": 10.0, "num_lanes": 2, "geometry": {"junction_x_m": 35.0, "junction_y_m": 50.0}},
+    {"id": 400002, "name": "t_long_stem", "provenance": "synthetic_junction_offset", "parent_scenario_id": 1, "topology": "T_JUNCTION", "road_width": 10.0, "num_lanes": 2, "geometry": {"junction_x_m": 50.0, "junction_y_m": 65.0}},
+    {"id": 400003, "name": "cross_left", "provenance": "synthetic_junction_offset", "parent_scenario_id": 2, "topology": "CROSS", "road_width": 10.0, "num_lanes": 2, "geometry": {"junction_x_m": 30.0, "junction_y_m": 50.0}},
+    {"id": 400004, "name": "cross_asymmetric", "provenance": "synthetic_junction_offset", "parent_scenario_id": 2, "topology": "CROSS", "road_width": 10.0, "num_lanes": 2, "geometry": {"junction_x_m": 40.0, "junction_y_m": 65.0}}
+  ]
+}

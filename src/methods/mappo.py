@@ -10,7 +10,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 import torch
@@ -23,6 +23,7 @@ from src.environment import (
     MapGeometry,
     Scenario,
     allowed_mount_yaws_deg,
+    angular_visibility_mask,
     bake_visibility_map,
     compute_config_hash,
     compute_view_angles_numpy,
@@ -297,7 +298,11 @@ def _subsample_spawns_by_spacing(valid_spawns: list[tuple[int, int]], geometry: 
 
 
 class LegacyMAPPOEnv:
-    def __init__(self, scenario: Scenario, lidar_profile: str, config: ExperimentConfig, params: LegacyMAPPOParams):
+    def __init__(self, scenario: Scenario, lidar_profile: str, config: ExperimentConfig, params: LegacyMAPPOParams,
+                 *, visibility_data: dict[str, Any] | None = None,
+                 visibility_query: Callable[[int, int, int], np.ndarray] | None = None):
+        if (visibility_data is None) != (visibility_query is None):
+            raise ValueError("On-demand visibility requires both metadata and a query provider")
         self.scenario = scenario
         self.config = config
         self.params = params
@@ -306,7 +311,8 @@ class LegacyMAPPOEnv:
         self.cols = int(self.geometry.map_len / self.geometry.grid_size)
         self.rows = int(self.geometry.map_width / self.geometry.grid_size)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.data = bake_visibility_map(config, scenario, self.profile)
+        self.data = bake_visibility_map(config, scenario, self.profile) if visibility_data is None else visibility_data
+        self.visibility_query = visibility_query
         self.target_points_np = np.asarray(self.data["target_points"], dtype=np.float32)
         self.target_weights_np = np.asarray(
             self.data.get("target_weights", np.ones(len(self.target_points_np), dtype=np.float32) * float(params.score_base_voxel)),
@@ -329,7 +335,6 @@ class LegacyMAPPOEnv:
         self._prev_uncovered_dists: torch.Tensor | None = None
         self.h_fov_rad = np.deg2rad(self.profile.h_fov_deg) / 2.0
         self.v_fov_rad = np.deg2rad(self.profile.v_fov_deg) / 2.0
-        self.min_dist = 0.5
         centers = [(x, y) for x in self.geometry.road_x_centers for y in self.geometry.road_y_centers]
         self.align_centers = np.asarray(centers, dtype=np.float32) if centers else np.empty((0, 2), dtype=np.float32)
         self.road_x_centers = np.asarray(getattr(self.geometry, "road_x_centers", []), dtype=np.float32)
@@ -373,7 +378,8 @@ class LegacyMAPPOEnv:
             self._visible_idx_cache[key] = out
             self.counts[key] = 0
             return out
-        idx = unpack_visible_indices(self.data, key)
+        idx = (unpack_visible_indices(self.data, key) if self.visibility_query is None
+               else np.asarray(self.visibility_query(*key), dtype=np.int64))
         self._visible_idx_cache[key] = idx
         self.counts[key] = int(self.counts.get(key, len(idx)))
         return idx
@@ -392,11 +398,12 @@ class LegacyMAPPOEnv:
             ranked = ranked[: min(top_k, len(ranked))]
         return ranked if ranked else list(valid_spawns)
 
-    def evaluate_positions(self, positions: np.ndarray) -> tuple[float, float]:
+    def coverage_density(self, positions: np.ndarray) -> np.ndarray:
+        """Union-observation counts using the shared on-demand/cache optics path."""
         positions = _ensure_positions_array(positions)
-        if self.total_voxels == 0 or positions.size == 0:
-            return 0.0, 0.0
         density_map = np.zeros(self.total_voxels, dtype=np.float32)
+        if self.total_voxels == 0 or positions.size == 0:
+            return density_map
         for pos in positions:
             x, y, z, yaw, pitch = map(float, pos[:5])
             gx = int(np.floor(x / self.geometry.grid_size))
@@ -411,15 +418,18 @@ class LegacyMAPPOEnv:
             dx = pts[:, 0] - x
             dy = pts[:, 1] - y
             dz = pts[:, 2] - z
-            azimuth, elevation, forward, dist = compute_view_angles_numpy(dx, dy, dz, yaw, pitch)
-            if self.h_fov_rad >= (np.pi - 1e-6):
-                front_mask = np.ones_like(dist, dtype=bool)
-            else:
-                front_mask = forward > self.min_dist
-            fov_mask = (np.abs(azimuth) <= self.h_fov_rad) & (np.abs(elevation) <= self.v_fov_rad) & front_mask & (dist <= self.profile.max_range_m)
+            azimuth, elevation, _, dist = compute_view_angles_numpy(dx, dy, dz, yaw, pitch)
+            fov_mask = angular_visibility_mask(azimuth, elevation, dist,
+                self.h_fov_rad, self.v_fov_rad, self.profile.max_range_m)
             valid_idx = idx[fov_mask]
             if len(valid_idx) > 0:
                 np.add.at(density_map, valid_idx, 1.0)
+        return density_map
+
+    def evaluate_positions(self, positions: np.ndarray) -> tuple[float, float]:
+        density_map = self.coverage_density(positions)
+        if self.total_voxels == 0:
+            return 0.0, 0.0
         cur_score = float(np.sum(np.minimum(density_map / float(self.params.road_detection), 1.0) * self.target_weights_np))
         cov = (np.count_nonzero(density_map >= float(self.params.road_detection)) / self.total_voxels) * 100.0
         return float(cov), cur_score
@@ -442,12 +452,9 @@ class LegacyMAPPOEnv:
                 idx_tensor = torch.from_numpy(cached).to(self.device, non_blocking=True)
                 points_k = self.target_points[idx_tensor]
                 d_vec = points_k - agent_pos_tensor[i]
-                azimuth, elevation, forward, dist = _compute_view_angles_torch(d_vec[:, 0], d_vec[:, 1], d_vec[:, 2], ag.yaw, ag.pitch)
-                if self.h_fov_rad >= (np.pi - 1e-6):
-                    front_mask = torch.ones_like(dist, dtype=torch.bool)
-                else:
-                    front_mask = forward > self.min_dist
-                fov_mask = (torch.abs(azimuth) <= self.h_fov_rad) & (torch.abs(elevation) <= self.v_fov_rad) & front_mask & (dist <= self.profile.max_range_m)
+                azimuth, elevation, _, dist = _compute_view_angles_torch(d_vec[:, 0], d_vec[:, 1], d_vec[:, 2], ag.yaw, ag.pitch)
+                fov_mask = angular_visibility_mask(azimuth, elevation, dist,
+                    self.h_fov_rad, self.v_fov_rad, self.profile.max_range_m)
                 final_indices = idx_tensor[fov_mask]
                 if final_indices.numel() > 0:
                     density_map.index_add_(0, final_indices, torch.ones_like(final_indices, dtype=torch.float32))

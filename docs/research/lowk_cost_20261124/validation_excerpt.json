@@ -1,0 +1,65 @@
+{
+  "status": "passed",
+  "verification_status": "VERIFIED",
+  "created_at": "2026-11-27T06:18:40.311622+00:00",
+  "counts": {
+    "source_alternatives": 2748,
+    "source_frontier_rows": 240,
+    "source_archives": 24,
+    "transfer_replays": 16,
+    "surrogate_alternatives": 1018,
+    "reference_alternatives": 182,
+    "online_alternatives": 1274,
+    "online_rows": 1288,
+    "shortlist_replays": 448,
+    "direct_candidate_masks": 40840,
+    "direct_rays": 158998838,
+    "candidate_masks_checked": 40840,
+    "cases": 16,
+    "occlusion_monotonicity_pairs": 8
+  },
+  "direct_raycast": true,
+  "rerun_optimization": false,
+  "raw_inputs_unchanged": true,
+  "wall_sec": 202.93023927486502,
+  "script_sha256": "8581bd2ae24887cacb93ff9af6b6aa9e5f3d65edb91620dcb228d1a5f9be8499",
+  "limitations": [
+    "Same Open3D/optical model; physical model accuracy not established.",
+    "No independent optimality proof for feasible large MILPs; bound/flag consistency checked.",
+    "Source archives hash-checked and saved solutions recomputed, not reraycast in this audit.",
+    "Time-limited optical portfolio reconstructed from saved solutions, not reoptimized.",
+    "Eight reused development geometries; descriptive statistics, no p-values or generalization claim.",
+    "Shared hardware, non-randomized method order, no repeated cold timing benchmark."
+  ],
+  "summary": {
+    "reference_solver_status": {
+      "2": 109,
+      "9": 36,
+      "11": 34,
+      "17": 3,
+      "3": 2
+    },
+    "reference_exact": 109,
+    "reference_within_one_percent": 143,
+    "maximum_reference_gap": 1.259515570934256,
+    "online_above_reference_incumbent": 90,
+    "actual_q": {
+      "target_a_cross_l120_dense": 151,
+      "target_a_cross_l120_mixed": 151,
+      "target_a_cross_l180_dense": 143,
+      "target_a_cross_l180_mixed": 143,
+      "target_a_t_junction_l120_dense": 162,
+      "target_a_t_junction_l120_mixed": 162,
+      "target_a_t_junction_l180_dense": 139,
+      "target_a_t_junction_l180_mixed": 139,
+      "target_b_l160_dense": 256,
+      "target_b_l160_mixed": 256,
+      "target_b_l240_dense": 256,
+      "target_b_l240_mixed": 256,
+      "target_b_l320_dense": 256,
+      "target_b_l320_mixed": 256,
+      "target_b_l480_dense": 256,
+      "target_b_l480_mixed": 256
+    }
+  }
+}

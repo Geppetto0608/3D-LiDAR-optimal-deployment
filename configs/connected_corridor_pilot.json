@@ -1,0 +1,44 @@
+{
+  "schema": "connected_corridor_pilot_v1",
+  "geometry": {
+    "length_m": 80,
+    "road_width_m": 7,
+    "bend_length_m": 20,
+    "sidewalk_width_m": 5,
+    "building_height_m": 15,
+    "wall_thickness_m": 2,
+    "mesh_step_m": 0.5,
+    "median_width_m": 0.5
+  },
+  "angles_deg": [0, -15, 15, -30, 30, -60, 60],
+  "target_step_m": 1,
+  "target_heights_m": [1, 1.5, 2],
+  "candidate": {
+    "station_step_m": 4,
+    "heights_m": [3, 5],
+    "relative_yaws_deg": [-45, 0, 45],
+    "pitches_deg": [-20, -10]
+  },
+  "alternatives_per_site": 1,
+  "interface_half_length_m": 10,
+  "local_station_radius_m": 8,
+  "requirements": {
+    "schema": "constrained_coverage_v2",
+    "budget_k": 2,
+    "weights": {
+      "coverage_weight": 1,
+      "overlap_penalty": 0.05,
+      "installation_cost_weight": 0.2
+    },
+    "cost": {"base_per_sensor": 10, "per_height_m": 1},
+    "constraints": {
+      "max_installation_cost": 28,
+      "min_xy_separation_m": 3,
+      "max_sensors_per_pole": 1,
+      "mounting_z_range_m": [3, 5],
+      "min_coverage_pct": 60,
+      "max_overlap_ratio": 0.8,
+      "min_single_failure_coverage_pct": 25
+    }
+  }
+}

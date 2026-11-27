@@ -14,6 +14,7 @@ import numpy as np
 
 
 VISIBILITY_MODEL = "open3d_raycast_v1"
+OPTICAL_MODEL = "angular_fov_range_v2"
 
 
 def _coerce_scalar(value: str) -> Any:
@@ -109,6 +110,13 @@ class ExperimentConfig:
         return float(self.candidate.get("xy_step_m", 2.0))
 
     @property
+    def xy_domain(self) -> str:
+        value = self.candidate.get("xy_domain", "bin_representatives")
+        if value not in ("bin_representatives", "installable_grid"):
+            raise ValueError(f"Unknown candidate.xy_domain: {value!r}")
+        return value
+
+    @property
     def z_min(self) -> float:
         return float(self.candidate.get("z_min", 3.0))
 
@@ -190,9 +198,16 @@ def load_config(path: str | Path = "configs/experiment.yaml") -> ExperimentConfi
     )
 
 
-def config_hash_payload(config: ExperimentConfig) -> dict[str, Any]:
+def optical_model_metadata(profile: LidarProfile) -> dict[str, str]:
+    # Preserve existing 360-degree library/hash contracts; limited FOV changed.
+    return {"optical_model": OPTICAL_MODEL} if profile.h_fov_deg < 360.0 else {}
+
+
+def config_hash_payload(config: ExperimentConfig, profile: LidarProfile | None = None) -> dict[str, Any]:
+    profile = profile or get_lidar_profile(config.lidar_profile, config)
     return {
         "visibility_model": VISIBILITY_MODEL,
+        **optical_model_metadata(profile),
         "lidar_profile": config.lidar_profile,
         "candidate": config.candidate,
         "target": config.target,
@@ -280,8 +295,22 @@ class MapGeometry:
     negative_zones: list[list[float]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        settings = self.scenario.raw.get('geometry', {})
+        if not isinstance(settings, dict) or set(settings) - {'junction_x_m', 'junction_y_m'}:
+            raise ValueError('Unsupported scenario geometry settings')
+        if settings and self.scenario.topology not in {'CROSS', 'T_JUNCTION'}:
+            raise ValueError('Junction offsets are supported only for CROSS/T_JUNCTION')
+        self.junction_x_m = float(settings.get('junction_x_m', 50.0))
+        self.junction_y_m = float(settings.get('junction_y_m', self.road_centers_y[0]))
+        if settings:
+            margin = self.scenario.road_width / 2.0 + self.sidewalk_width + self.grid_size
+            if not (np.isfinite([self.junction_x_m, self.junction_y_m]).all()
+                    and margin < self.junction_x_m < self.map_len - margin
+                    and margin < self.junction_y_m < self.map_width - margin):
+                raise ValueError('Junction must leave nonempty road/sidewalk/building arms inside the map')
+            self.road_centers_y = [self.junction_y_m]
         if self.scenario.topology in {"CROSS", "T_JUNCTION", "COMPLEX"}:
-            self.road_centers_x = [50.0]
+            self.road_centers_x = [self.junction_x_m]
         self.half_road = self.scenario.road_width / 2.0
         self.num_lanes = self.scenario.num_lanes
         self.sidewalk_center_offset = self.half_road + self.sidewalk_width / 2.0
@@ -291,36 +320,36 @@ class MapGeometry:
 
     def _set_building_zones(self) -> None:
         topo = self.scenario.topology
-        mid = 50.0
+        cx, cy = self.junction_x_m, self.junction_y_m
         offset = self.half_road + self.sidewalk_width
         if topo in {"STRAIGHT", "UNKNOWN"}:
-            self.negative_zones = [[0, 0, 100, mid - offset], [0, mid + offset, 100, 100]]
+            self.negative_zones = [[0, 0, self.map_len, cy - offset], [0, cy + offset, self.map_len, self.map_width]]
         elif topo in {"CROSS", "COMPLEX"}:
             self.negative_zones = [
-                [0, 0, mid - offset, mid - offset],
-                [mid + offset, 0, 100, mid - offset],
-                [0, mid + offset, mid - offset, 100],
-                [mid + offset, mid + offset, 100, 100],
+                [0, 0, cx - offset, cy - offset],
+                [cx + offset, 0, self.map_len, cy - offset],
+                [0, cy + offset, cx - offset, self.map_width],
+                [cx + offset, cy + offset, self.map_len, self.map_width],
             ]
         elif topo == "T_JUNCTION":
             self.negative_zones = [
-                [0, mid + offset, 100, 100],
-                [0, 0, mid - offset, mid - offset],
-                [mid + offset, 0, 100, mid - offset],
+                [0, cy + offset, self.map_len, self.map_width],
+                [0, 0, cx - offset, cy - offset],
+                [cx + offset, 0, self.map_len, cy - offset],
             ]
 
     def is_road(self, x: float, y: float) -> bool:
         topo = self.scenario.topology
         for rc in self.road_centers_x:
             if abs(x - rc) < self.half_road:
-                if topo == "T_JUNCTION" and y > 50 + self.half_road:
+                if topo == "T_JUNCTION" and y > self.junction_y_m + self.half_road:
                     continue
                 if self.median_width / 2 < abs(x - rc) < self.half_road:
                     return True
         for rc in self.road_centers_y:
             if abs(y - rc) < self.half_road and self.median_width / 2 < abs(y - rc) < self.half_road:
                 return True
-        return topo in {"CROSS", "T_JUNCTION", "COMPLEX"} and abs(x - 50.0) < self.half_road and abs(y - 50.0) < self.half_road
+        return topo in {"CROSS", "T_JUNCTION", "COMPLEX"} and abs(x - self.junction_x_m) < self.half_road and abs(y - self.junction_y_m) < self.half_road
 
     def _is_on_median_line(self, x: float, y: float) -> bool:
         median_half = self.median_width / 2.0 + 1e-6
@@ -386,7 +415,7 @@ class MapGeometry:
         def draw_infrastructure(center: float, horizontal: bool = True) -> None:
             length = self.map_len if horizontal else self.map_width
             if (not horizontal) and self.scenario.topology == "T_JUNCTION":
-                length = 50.0 + self.half_road
+                length = self.junction_y_m + self.half_road
 
             road = o3d.geometry.TriangleMesh.create_box(length if horizontal else self.scenario.road_width, self.scenario.road_width if horizontal else length, 0.08)
             road.translate([0.0 if horizontal else center - self.half_road, center - self.half_road if horizontal else 0.0, 0.02])
@@ -416,7 +445,7 @@ class MapGeometry:
                     if self.scenario.topology == "T_JUNCTION" and side == 1:
                         segments = [[0.0, self.map_len]]
                     else:
-                        segments = [[0.0, 50.0 - self.half_road], [50.0 + self.half_road, self.map_len]] if self.road_centers_x else [[0.0, self.map_len]]
+                        segments = [[0.0, self.junction_x_m - self.half_road], [self.junction_x_m + self.half_road, self.map_len]] if self.road_centers_x else [[0.0, self.map_len]]
                     for start, end in segments:
                         if end - start <= 0:
                             continue
@@ -425,8 +454,8 @@ class MapGeometry:
                         sidewalk.paint_uniform_color([1.0, 0.9, 0.0])
                         geoms.append(sidewalk)
                 else:
-                    v_limit = 50.0 + self.half_road if self.scenario.topology == "T_JUNCTION" else self.map_width
-                    segments = [[0.0, 50.0 - self.half_road], [50.0 + self.half_road, v_limit]]
+                    v_limit = self.junction_y_m + self.half_road if self.scenario.topology == "T_JUNCTION" else self.map_width
+                    segments = [[0.0, self.junction_y_m - self.half_road], [self.junction_y_m + self.half_road, v_limit]]
                     for start, end in segments:
                         if end - start <= 0:
                             continue
@@ -452,6 +481,160 @@ class MapGeometry:
         return combined
 
 
+@dataclass(frozen=True)
+class ConnectedCorridorGeometry:
+    """Opt-in straight/arc/straight corridor; unrelated to legacy scenario IDs.
+
+    The two modules meet at length/2. A circular transition straddles this
+    interface. Rays remain Euclidean; only the road and mounting lines bend.
+    """
+    length_m: float = 80.0
+    road_width_m: float = 7.0
+    turn_deg: float = 0.0
+    bend_length_m: float = 20.0
+    sidewalk_width_m: float = 5.0
+    building_height_m: float = 15.0
+    wall_thickness_m: float = 2.0
+    mesh_step_m: float = 0.5
+    median_width_m: float = 0.5
+
+    def __post_init__(self):
+        values = list(self.__dict__.values())
+        if any(isinstance(value, bool) for value in values) or not np.isfinite(values).all():
+            raise ValueError('Corridor parameters must be finite')
+        for name in ('length_m', 'road_width_m', 'sidewalk_width_m', 'building_height_m',
+                     'wall_thickness_m', 'mesh_step_m'):
+            if getattr(self, name) <= 0:
+                raise ValueError(f'{name} must be positive')
+        if not (0 <= self.median_width_m < self.road_width_m):
+            raise ValueError('Median must fit inside road')
+        if not (0 <= self.bend_length_m <= self.length_m):
+            raise ValueError('Transition must fit inside corridor')
+        if abs(self.turn_deg) > 90 or (self.turn_deg and not self.bend_length_m):
+            raise ValueError('Supported turn: [-90,90] degrees with a nonzero transition')
+        outer = self.road_width_m / 2 + self.sidewalk_width_m + self.wall_thickness_m
+        if abs(self.curvature) * outer >= 1:
+            raise ValueError('Bend radius must exceed the outer building offset')
+
+    @property
+    def curvature(self):
+        return np.deg2rad(self.turn_deg) / self.bend_length_m if self.bend_length_m else 0.
+
+    @property
+    def mounting_offset_m(self):
+        return self.road_width_m / 2 + self.sidewalk_width_m / 2
+
+    def centerline(self, stations):
+        s = np.asarray(stations, dtype=float)
+        if not np.isfinite(s).all() or np.any(s < 0) or np.any(s > self.length_m):
+            raise ValueError('Station outside corridor')
+        if abs(self.curvature) < 1e-12:
+            return np.stack([s, np.zeros_like(s)], axis=-1), np.zeros_like(s)
+        start = (self.length_m - self.bend_length_m) / 2
+        u = np.clip(s - start, 0., self.bend_length_m)
+        theta = self.curvature * u
+        x = start + np.sin(theta) / self.curvature
+        y = (1 - np.cos(theta)) / self.curvature
+        tail = np.maximum(s - start - self.bend_length_m, 0.)
+        x += tail * np.cos(theta)
+        y += tail * np.sin(theta)
+        x = np.where(s < start, s, x)
+        y = np.where(s < start, 0., y)
+        return np.stack([x, y], axis=-1), theta
+
+    def points(self, station_lateral_height):
+        coordinates = np.asarray(station_lateral_height, dtype=float)
+        if coordinates.ndim != 2 or coordinates.shape[1] != 3 or not np.isfinite(coordinates).all():
+            raise ValueError('Expected finite [N,3] station/lateral/height')
+        xy, heading = self.centerline(coordinates[:, 0])
+        normal = np.column_stack([-np.sin(heading), np.cos(heading)])
+        return np.column_stack([xy + coordinates[:, 1, None] * normal, coordinates[:, 2]])
+
+    def poses(self, canonical):
+        """[s, signed lateral offset, z, road-normal-relative yaw, pitch]."""
+        canonical = np.asarray(canonical, dtype=float)
+        self.validate_canonical(canonical)
+        _, heading = self.centerline(canonical[:, 0])
+        inward = np.where(canonical[:, 1] > 0, -90., 90.)
+        yaw = (np.rad2deg(heading) + inward + canonical[:, 3]) % 360
+        return np.column_stack([self.points(canonical[:, :3]), yaw, canonical[:, 4]])
+
+    def validate_canonical(self, canonical):
+        p = np.asarray(canonical, dtype=float)
+        if p.ndim != 2 or p.shape[1] != 5 or not np.isfinite(p).all():
+            raise ValueError('Expected finite [K,5] canonical poses')
+        if (np.any(p[:, 0] < 0) or np.any(p[:, 0] > self.length_m)
+                or not np.allclose(np.abs(p[:, 1]), self.mounting_offset_m, atol=1e-8, rtol=0)
+                or np.any(p[:, 2] < 3) or np.any(p[:, 2] > 6)
+                or np.any(np.abs(p[:, 3]) > 55)
+                or np.any(p[:, 4] < -25) or np.any(p[:, 4] > -5)):
+            raise ValueError('Canonical pose violates corridor mounting domain')
+
+    def target_samples(self, step_m=1., heights=(1., 1.5, 2.)):
+        if not np.isfinite(step_m) or step_m <= 0:
+            raise ValueError('Positive finite sampling step required')
+        counts = np.array([self.length_m, self.road_width_m]) / step_m
+        if not np.allclose(counts, np.round(counts), atol=1e-8, rtol=0):
+            raise ValueError('Target step must divide both length and width')
+        heights = np.asarray(heights, dtype=float)
+        if (heights.ndim != 1 or not len(heights) or not np.isfinite(heights).all()
+                or np.any(heights <= .23) or len(np.unique(heights)) != len(heights)):
+            raise ValueError('Targets must be above road infrastructure')
+        stations = (np.arange(int(round(counts[0]))) + .5) * step_m
+        lateral = (np.arange(int(round(counts[1]))) + .5) * step_m - self.road_width_m / 2
+        lateral = lateral[np.abs(lateral) > self.median_width_m / 2]
+        if not len(stations) or not len(lateral):
+            raise ValueError('Sampling produced no road targets')
+        canonical = np.array(np.meshgrid(stations, lateral, heights, indexing='ij')).reshape(3, -1).T
+        return self.points(canonical).astype(np.float32), canonical
+
+    def create_environment_mesh(self):
+        """Closed swept slabs, open road ends, and opaque roadside wall strips."""
+        import open3d as o3d
+        breaks = [(self.length_m - self.bend_length_m) / 2,
+                  (self.length_m + self.bend_length_m) / 2]
+        stations = np.unique(np.r_[np.linspace(0, self.length_m,
+            int(np.ceil(self.length_m / self.mesh_step_m)) + 1), breaks])
+        combined = o3d.geometry.TriangleMesh()
+
+        def slab(lo, hi, bottom, top, color):
+            vertices = []
+            for d, z in ((lo, bottom), (hi, bottom), (lo, top), (hi, top)):
+                vertices.extend(self.points(np.column_stack([stations,
+                    np.full(len(stations), d), np.full(len(stations), z)])))
+            n = len(stations)
+            faces = []
+
+            def quad(a, b, c, d):
+                faces.extend([[a, b, c], [a, c, d]])
+
+            for i in range(n - 1):
+                quad(i, i + 1, n + i + 1, n + i)
+                quad(2*n + i, 3*n + i, 3*n + i + 1, 2*n + i + 1)
+                quad(i, 2*n + i, 2*n + i + 1, i + 1)
+                quad(n + i, n + i + 1, 3*n + i + 1, 3*n + i)
+            quad(0, n, 3*n, 2*n)
+            quad(n - 1, 3*n - 1, 4*n - 1, 2*n - 1)
+            mesh = o3d.geometry.TriangleMesh(
+                o3d.utility.Vector3dVector(np.asarray(vertices)),
+                o3d.utility.Vector3iVector(np.asarray(faces)))
+            mesh.paint_uniform_color(color)
+            return mesh
+
+        half = self.road_width_m / 2
+        outer = half + self.sidewalk_width_m
+        combined += slab(-half, half, 0., .1, [.2, .2, .2])
+        if self.median_width_m:
+            combined += slab(-self.median_width_m / 2, self.median_width_m / 2,
+                             .1, .17, [.8, .6, .1])
+        for side in (-1, 1):
+            lo, hi = sorted([side * half, side * outer])
+            combined += slab(lo, hi, .08, .23, [.7, .7, .7])
+            lo, hi = sorted([side * outer, side * (outer + self.wall_thickness_m)])
+            combined += slab(lo, hi, .1, .1 + self.building_height_m, [.4, .4, .4])
+        return combined
+
+
 def relative_yaw_range_deg(yaw_axis_min_deg: float, yaw_axis_max_deg: float) -> tuple[float, float]:
     lo, hi = sorted([float(yaw_axis_min_deg), float(yaw_axis_max_deg)])
     return lo - 90.0, hi - 90.0
@@ -465,6 +648,60 @@ def allowed_mount_yaws_deg(wx: float, wy: float, map_geom: MapGeometry, yaw_step
     return np.unique(np.round((base_yaw + (rels if rels.size else np.array([0.0], dtype=np.float32))) % 360.0, 6))
 
 
+def installation_base_positions(geometry: MapGeometry, config: ExperimentConfig) -> list[tuple[float, float, float]]:
+    """Geometry-only candidate domain; no coverage or deployment inputs."""
+    mode = config.xy_domain
+    if not np.isfinite([config.z_min, config.z_max, config.z_step, config.xy_step_m]).all():
+        raise ValueError("Installation grid parameters must be finite")
+    if config.z_step <= 0 or config.z_max < config.z_min or config.xy_step_m <= 0:
+        raise ValueError("Invalid installation grid spacing or height range")
+    zs = []
+    z = config.z_min
+    while z <= config.z_max + 1e-9:
+        zs.append(round(z, 10))
+        z += config.z_step
+    positions = []
+    seen_bins = set()
+    step_m = max(config.xy_step_m, geometry.grid_size)
+    for gx in range(int(geometry.map_len / geometry.grid_size)):
+        for gy in range(int(geometry.map_width / geometry.grid_size)):
+            x, y = (gx + .5) * geometry.grid_size, (gy + .5) * geometry.grid_size
+            if not geometry.is_installable(float(x), float(y)):
+                continue
+            if mode == "bin_representatives":
+                key = (int(np.floor(x / step_m)), int(np.floor(y / step_m)))
+                if key in seen_bins:
+                    continue
+                seen_bins.add(key)
+            positions.extend((float(x), float(y), float(z)) for z in zs)
+    return positions
+
+
+def validate_installation_pose(pose, geometry: MapGeometry, config: ExperimentConfig) -> None:
+    """Validate the full discrete physical domain, before pruning/dedup/search limits."""
+    pose = np.asarray(pose, dtype=float)
+    if pose.shape != (5,) or not np.isfinite(pose).all():
+        raise ValueError("Expected finite [x,y,z,yaw,pitch] pose")
+    x, y, z, yaw, pitch = pose
+    cell = pose[:2] / geometry.grid_size - .5
+    if not np.allclose(cell, np.round(cell), atol=1e-5, rtol=0):
+        raise ValueError("XY must be grid cell centers")
+    if not (0 <= x < geometry.map_len and 0 <= y < geometry.map_width):
+        raise ValueError("XY outside map bounds")
+    if not geometry.is_installable(x, y, z):
+        raise ValueError("Pose outside installation region")
+    if config.z_step <= 0 or config.pitch_step_deg <= 0 or config.yaw_step_deg <= 0:
+        raise ValueError("Discrete pose steps must be positive")
+    zs = np.arange(config.z_min, config.z_max + 1e-6, config.z_step)
+    pitches = np.arange(config.pitch_min_deg, config.pitch_max_deg + 1e-6, config.pitch_step_deg)
+    if not np.any(np.isclose(zs, z, atol=1e-5, rtol=0)) or not np.any(np.isclose(pitches, pitch, atol=1e-5, rtol=0)):
+        raise ValueError("Z/pitch outside allowed discrete grid")
+    yaws = allowed_mount_yaws_deg(x, y, geometry, config.yaw_step_deg,
+                                  config.yaw_axis_min_deg, config.yaw_axis_max_deg)
+    if not np.any(np.abs((yaws - yaw + 180) % 360 - 180) < 1e-4):
+        raise ValueError("Yaw outside allowed discrete grid")
+
+
 def compute_view_angles_numpy(dx, dy, dz, yaw_deg, pitch_deg):
     pitch_rad = np.deg2rad(float(pitch_deg))
     yaw_rad = np.deg2rad(float(yaw_deg))
@@ -476,6 +713,16 @@ def compute_view_angles_numpy(dx, dy, dz, yaw_deg, pitch_deg):
     dx_f = dx_y * cp + dz * sp
     dz_f = -dx_y * sp + dz * cp
     return np.arctan2(dy_y, dx_f), np.arctan2(dz_f, np.sqrt(dx_f * dx_f + dy_y * dy_y)), dx_f, dist
+
+
+def angular_visibility_mask(azimuth, elevation, distance, half_h, half_v, max_range):
+    """Angular/range visibility for NumPy arrays or Torch tensors, without LOS.
+
+    No forward slab or sensor minimum range is implied by horizontal FOV.
+    Coincident targets are excluded because their viewing direction is undefined.
+    """
+    return ((abs(azimuth) <= half_h) & (abs(elevation) <= half_v)
+            & (distance <= max_range) & (distance > 1e-6))
 
 
 def z_values_from_config(config: ExperimentConfig) -> np.ndarray:
@@ -523,11 +770,10 @@ def coverage_mask_for_pose(
     dx = pts[:, 0] - x
     dy = pts[:, 1] - y
     dz = pts[:, 2] - z
-    azimuth, elevation, forward, dist = compute_view_angles_numpy(dx, dy, dz, yaw, pitch)
+    azimuth, elevation, _, dist = compute_view_angles_numpy(dx, dy, dz, yaw, pitch)
     half_h = np.deg2rad(profile.h_fov_deg) / 2.0
     half_v = np.deg2rad(profile.v_fov_deg) / 2.0
-    front = np.ones_like(dist, dtype=bool) if half_h >= np.pi - 1e-6 else forward > 0.5
-    valid = (np.abs(azimuth) <= half_h) & (np.abs(elevation) <= half_v) & front & (dist <= profile.max_range_m)
+    valid = angular_visibility_mask(azimuth, elevation, dist, half_h, half_v, profile.max_range_m)
     mask[idx[valid]] = True
     return mask
 
@@ -540,9 +786,14 @@ def compute_config_hash(config: ExperimentConfig, scenario: Scenario, profile: L
                 "topology": scenario.topology,
                 "road_width": scenario.road_width,
                 "num_lanes": scenario.num_lanes,
+                **({'geometry': {
+                    'model': 'axis_aligned_junction_v1',
+                    'junction_x_m': MapGeometry(scenario).junction_x_m,
+                    'junction_y_m': MapGeometry(scenario).junction_y_m,
+                }} if scenario.raw.get('geometry') else {}),
             },
             "profile": profile.__dict__,
-            "config": config_hash_payload(config),
+            "config": config_hash_payload(config, profile),
         }
     ).encode("utf-8")
     return hashlib.sha1(payload).hexdigest()
@@ -552,7 +803,9 @@ def make_cache_key(scenario_or_id: Scenario | int, lidar_profile: str | LidarPro
     scenario_id = scenario_or_id.id if isinstance(scenario_or_id, Scenario) else int(scenario_or_id)
     profile_name = lidar_profile.name if isinstance(lidar_profile, LidarProfile) else str(lidar_profile)
     if isinstance(config_or_hash, ExperimentConfig):
-        config_hash = hashlib.sha1(repr(config_hash_payload(config_or_hash)).encode("utf-8")).hexdigest()
+        profile = (lidar_profile if isinstance(lidar_profile, LidarProfile)
+                   else get_lidar_profile(profile_name, config_or_hash))
+        config_hash = hashlib.sha1(repr(config_hash_payload(config_or_hash, profile)).encode("utf-8")).hexdigest()
     else:
         config_hash = str(config_or_hash)
     return f"visibility_s{scenario_id}_{profile_name.lower()}_{config_hash[:12]}"
@@ -564,7 +817,7 @@ def visibility_cache_path(config: ExperimentConfig, scenario: Scenario, profile:
     return key, config.cache_dir / f"{key}.pkl"
 
 
-def bake_visibility_map(config: ExperimentConfig, scenario: Scenario, profile: LidarProfile, force: bool = False) -> dict[str, Any]:
+def bake_visibility_map(config: ExperimentConfig, scenario: Scenario, profile: LidarProfile, force: bool = False, *, work=None) -> dict[str, Any]:
     expected_hash = compute_config_hash(config, scenario, profile)
     cache_key, path = visibility_cache_path(config, scenario, profile)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -573,6 +826,8 @@ def bake_visibility_map(config: ExperimentConfig, scenario: Scenario, profile: L
             data = pickle.load(f)
         meta = data.get("meta", {}) if isinstance(data, dict) else {}
         if data.get("cache_key") == cache_key and meta.get("config_hash") == expected_hash and data.get("visibility_model") == VISIBILITY_MODEL and "table" in data:
+            if work is not None:
+                work.add('full_cache_loads')
             return data
         raise RuntimeError(f"Visibility cache metadata mismatch: {path}")
     try:
@@ -619,8 +874,15 @@ def bake_visibility_map(config: ExperimentConfig, scenario: Scenario, profile: L
                     rays_np = np.concatenate([origins, dirs], axis=1)
                     rays = o3d.core.Tensor(rays_np, dtype=o3d.core.Dtype.Float32, device=device)
                     try:
+                        if work is not None:
+                            work.add('raycast_calls')
+                            work.add('rays_submitted', len(rays_np))
                         result = scene.cast_rays(rays)
                     except RuntimeError:
+                        if work is not None:
+                            work.add('raycast_calls')
+                            work.add('raycast_retries')
+                            work.add('rays_submitted', len(rays_np))
                         result = scene.cast_rays(rays.to(o3d.core.Device("CPU:0")))
                     t_hit = result["t_hit"].numpy()
                     visible = ((~np.isfinite(t_hit)) | (t_hit >= dist - 1e-3)) & (dist <= profile.max_range_m)

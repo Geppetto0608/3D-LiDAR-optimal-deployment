@@ -1,0 +1,37 @@
+{
+  "schema": "library_occlusion_siting_sweep_v1",
+  "sources": {
+    "A": "results/library_ab_smoke_20261118/a_v2",
+    "B": "results/library_ab_smoke_20261118/b"
+  },
+  "design": {
+    "track_a": {
+      "road_widths_m": [8, 9, 10, 11, 12, 13],
+      "junction_centers_m": [[32, 44], [40, 60], [60, 40], [68, 56]],
+      "scenario_id_start": 440001
+    },
+    "track_b": {
+      "lengths_m": [120, 160, 200, 240],
+      "road_widths_m": [8, 12],
+      "turn_degrees": [15, 30, 45, 60],
+      "bend_length_m": 32,
+      "mesh_step_m": 2,
+      "modules": 2
+    }
+  },
+  "k_values": [1, 2, 3],
+  "control_seeds": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29],
+  "enumeration_limit": 100000,
+  "screens": {
+    "thickness_m": 0.2,
+    "height_m": 4.5,
+    "road_width_fraction": 0.7,
+    "a_branch_station_m": 20.0,
+    "b_station_fractions": [0.25, 0.75]
+  },
+  "installation_exclusion": {
+    "band_length_m": 20.0,
+    "a_east_station_m": 22.0,
+    "b_station_fraction": 0.25
+  }
+}

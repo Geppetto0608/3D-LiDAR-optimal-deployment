@@ -1,0 +1,9 @@
+{
+  "id": 430001,
+  "parent_scenario_id": 1,
+  "topology": "T_JUNCTION",
+  "road_width": 9,
+  "num_lanes": 2,
+  "geometry": {"junction_x_m": 45, "junction_y_m": 55},
+  "provenance": "synthetic_junction_offset"
+}

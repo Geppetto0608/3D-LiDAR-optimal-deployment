@@ -1,0 +1,55 @@
+{
+  "schema": "research_summary_export_v1",
+  "source_report": "library_lowk_cost_review_20261127_final",
+  "source_validation_sha256": "e45792fb6401ba978b6fc6a3da58419cda0dfd2c105929e7c21c581e3174816d",
+  "audit_created_at": "2026-11-27T06:18:40.311622+00:00",
+  "exporter_sha256": "be3b98858f23aad4c1ec5404448311359694ba5431d02f595d23b901810569be",
+  "tables": {
+    "method_summary.csv": {
+      "sha256": "98ebfe632389d5d9b789b7a797a0d381f40be49b67c4b6e6c34632b64dcae219",
+      "bytes": 935,
+      "rows": 5
+    },
+    "timing_summary.csv": {
+      "sha256": "a56c7ebaec9cf7dcca601c0df0d436f036614a92c201cbdddfba5580d72bdbc9",
+      "bytes": 479,
+      "rows": 5
+    },
+    "paired_summary.csv": {
+      "sha256": "753f154a5b6b49ad630253a3822547e3456383ab4790f32d3594e7105221ffae",
+      "bytes": 420,
+      "rows": 4
+    },
+    "map_balanced_summary.csv": {
+      "sha256": "2a8e031c3afce201b1ebbed5c678d7832158e43e68552bc331973d186098a0dc",
+      "bytes": 929,
+      "rows": 5
+    },
+    "paired_by_geometry.csv": {
+      "sha256": "4166deed830dbd902488dec462e9d05a3e3f066b1801a145d653711d514d0f48",
+      "bytes": 1592,
+      "rows": 32
+    },
+    "feasibility.csv": {
+      "sha256": "6158c7a45981fa7dab411d35ae360bddd44e8ab2d8219f6a46a8a1069408235a",
+      "bytes": 986,
+      "rows": 25
+    },
+    "references.csv": {
+      "sha256": "fc1c7efe4d00daaf94deb9df07e1886ea8a8eaf0871251e7bdf243424daddcc4",
+      "bytes": 51446,
+      "rows": 184
+    },
+    "infeasibility_proofs.csv": {
+      "sha256": "173ff935fb3f7f5d9a80d7b187c94ce9ccc034c4ab75894d77ff0422f93944d4",
+      "bytes": 572,
+      "rows": 2
+    },
+    "case_validation.csv": {
+      "sha256": "48970ead792cb319d24d37ffa6215afefe546227b70eef0ac3a230bcbf245e46",
+      "bytes": 2167,
+      "rows": 16
+    }
+  },
+  "scope": "CSV files are byte-identical copies; validation JSON is a field-selected excerpt. No poses, masks, checkpoints, host paths or credentials. This export does not rerun verification."
+}

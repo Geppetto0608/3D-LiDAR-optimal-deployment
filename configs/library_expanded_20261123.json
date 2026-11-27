@@ -1,0 +1,38 @@
+{
+  "schema": "library_expanded_study_v1",
+  "k_values": [1, 2, 3, 4, 5, 6, 7, 8],
+  "query_budgets": [32, 64, 128],
+  "source_counts": [1, 3],
+  "alternatives_per_k": 12,
+  "random_seeds": [0, 1, 2],
+  "sampling": {
+    "xy_step_m": 5.0, "station_step_m": 5.0,
+    "relative_yaws_deg": [-30.0, 0.0, 30.0],
+    "heights_m": [3.0], "pitches_deg": [-10.0], "target_b_step_m": 2.0
+  },
+  "source_a": {
+    "topologies": ["T_JUNCTION", "CROSS"], "widths_m": [8.0, 10.0, 12.0], "center_m": [50.0, 50.0]
+  },
+  "source_b": {
+    "widths_m": [8.0, 12.0], "turns_deg": [0.0, 30.0, 60.0], "length_m": 80.0, "bend_length_m": 32.0
+  },
+  "targets": [
+    {"name": "a_t_w9", "track": "A", "topology": "T_JUNCTION", "width_m": 9.0, "center_m": [40.0, 54.0]},
+    {"name": "a_cross_w11", "track": "A", "topology": "CROSS", "width_m": 11.0, "center_m": [60.0, 46.0]},
+    {"name": "b_l160_w8_t15", "track": "B", "width_m": 8.0, "length_m": 160.0, "turn_deg": 15.0, "modules": 2},
+    {"name": "b_l240_w12_t45", "track": "B", "width_m": 12.0, "length_m": 240.0, "turn_deg": 45.0, "modules": 3}
+  ],
+  "installation_levels": ["open", "restricted"],
+  "occlusion_levels": ["clear", "occluded"],
+  "screens": {
+    "thickness_m": 0.2, "height_m": 4.5, "road_width_fraction": 0.7,
+    "a_branch_station_m": 20.0, "b_station_fractions": [0.25, 0.75]
+  },
+  "installation": {"band_length_m": 20.0, "a_east_station_m": 22.0, "b_station_fraction": 0.25},
+  "optimization": {
+    "source_seconds": 1800.0, "reference_seconds": 1800.0, "arm_seconds": 300.0,
+    "surrogate_seconds": 10.0, "swap_seconds": 0.1, "certificate_gap": 0.01,
+    "stop_policy": {"minimum_seconds": 300.0, "stagnation_seconds": 120.0, "relative_gap": 0.01, "interval_seconds": 10.0}
+  },
+  "worker_timeout_sec": 172800
+}

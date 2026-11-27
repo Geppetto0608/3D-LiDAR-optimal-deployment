@@ -1,0 +1,6 @@
+{
+  "schema": "connected_curvature_sweep_v1",
+  "angles_deg": [-30, 30, -60, 60],
+  "bend_lengths_m": [20, 15, 12],
+  "alternatives_per_site": [1, 2, 4]
+}

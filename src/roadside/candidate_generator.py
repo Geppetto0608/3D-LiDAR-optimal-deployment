@@ -1,6 +1,6 @@
 """Legacy-order roadside candidates; shared by all discrete methods."""
 from __future__ import annotations
-from typing import Any, Iterable
+from typing import Any, Callable, Hashable, Iterable
 import numpy as np
 from src.core.candidate import Candidate, CandidateSet
 from src.roadside.visibility_adapter import RoadsideVisibility
@@ -13,6 +13,7 @@ from src.environment import (
     compute_config_hash,
     coverage_mask_for_pose,
     get_lidar_profile,
+    installation_base_positions,
     visibility_cache_path,
 )
 
@@ -24,25 +25,7 @@ def _frange(start: float, stop: float, step: float) -> Iterable[float]:
 
 
 def _base_positions(geometry: MapGeometry, config: ExperimentConfig) -> list[tuple[float, float, float]]:
-    zs = list(_frange(config.z_min, config.z_max, config.z_step))
-    positions: list[tuple[float, float, float]] = []
-    cols = int(geometry.map_len / geometry.grid_size)
-    rows = int(geometry.map_width / geometry.grid_size)
-    seen_bins: set[tuple[int, int]] = set()
-    step_m = max(float(config.xy_step_m), geometry.grid_size)
-    for gx in range(cols):
-        for gy in range(rows):
-            x = (gx + 0.5) * geometry.grid_size
-            y = (gy + 0.5) * geometry.grid_size
-            if not geometry.is_installable(float(x), float(y)):
-                continue
-            key = (int(np.floor(x / step_m)), int(np.floor(y / step_m)))
-            if key in seen_bins:
-                continue
-            seen_bins.add(key)
-            for z in zs:
-                positions.append((float(x), float(y), float(z)))
-    return positions
+    return installation_base_positions(geometry, config)
 
 
 def planned_candidate_signature(scenario: Scenario, lidar_profile: str, config: ExperimentConfig) -> dict[str, Any]:
@@ -63,6 +46,7 @@ def planned_candidate_signature(scenario: Scenario, lidar_profile: str, config: 
         "topology": scenario.topology,
         "lidar_profile": profile.name,
         "topM": top_m,
+        "xy_domain": config.xy_domain,
         "num_base_positions": int(len(base_positions)),
         "num_candidates_planned": int(orientation_count),
         "candidate_builder": "src.methods.milp.build_oriented_candidates",
@@ -73,24 +57,32 @@ def planned_candidate_signature(scenario: Scenario, lidar_profile: str, config: 
     }
 
 
-def build_oriented_candidates(scenario: Scenario, lidar_profile: str, config: ExperimentConfig, *, max_orientations_per_position: int | None = None, dedup_exact_cover: bool = True) -> CandidateSet:
+def build_oriented_candidates(scenario: Scenario, lidar_profile: str, config: ExperimentConfig, *, max_orientations_per_position: int | None = None, dedup_exact_cover: bool = True,
+                              position_filter: Callable[[float, float, float], bool] | None = None,
+                              dedup_group: Callable[[float, float, float], Hashable] | None = None,
+                              work=None) -> CandidateSet:
     profile = get_lidar_profile(lidar_profile, config)
-    visibility = bake_visibility_map(config, scenario, profile)
+    visibility = (bake_visibility_map(config, scenario, profile) if work is None else
+                  bake_visibility_map(config, scenario, profile, work=work))
     target_points = np.asarray(visibility["target_points"], dtype=float)
     geometry = MapGeometry(scenario)
     provider = RoadsideVisibility(visibility, geometry, profile, config)
     top_m = config.max_orientations_per_position if max_orientations_per_position is None else int(max_orientations_per_position)
     candidates: list[Candidate] = []
-    seen_covers: set[bytes] = set()
+    seen_covers: set[Any] = set()
     before_pruning = after_pruning = skipped_dedup = 0
     pitches = list(_frange(config.pitch_min_deg, config.pitch_max_deg, config.pitch_step_deg))
     base_positions = _base_positions(geometry, config)
+    if position_filter is not None:
+        base_positions = [p for p in base_positions if position_filter(*p)]
     for x, y, z in base_positions:
         yaws = allowed_mount_yaws_deg(x, y, geometry, config.yaw_step_deg, config.yaw_axis_min_deg, config.yaw_axis_max_deg)
         local: list[tuple[int, float, float, np.ndarray]] = []
         for yaw in yaws:
             for pitch in pitches:
                 before_pruning += 1
+                if work is not None:
+                    work.add('candidate_pose_evaluations')
                 covered = provider.mask([x, y, z, yaw, pitch])
                 local.append((int(covered.sum()), float(yaw), float(pitch), covered))
         local.sort(key=lambda item: (-item[0], item[1], item[2]))
@@ -100,6 +92,8 @@ def build_oriented_candidates(scenario: Scenario, lidar_profile: str, config: Ex
         for _, yaw, pitch, covered in local:
             if dedup_exact_cover:
                 key = np.packbits(covered).tobytes()
+                if dedup_group is not None:
+                    key = (dedup_group(x, y, z), key)
                 if key in seen_covers:
                     skipped_dedup += 1
                     continue
@@ -112,6 +106,7 @@ def build_oriented_candidates(scenario: Scenario, lidar_profile: str, config: Ex
         cache_key=str(visibility["cache_key"]),
         config_hash=str(visibility.get("meta", {}).get("config_hash", "")),
         stats={
+            "xy_domain": config.xy_domain,
             "num_targets": int(len(target_points)),
             "num_base_positions": int(len(base_positions)),
             "num_candidates": int(len(candidates)),

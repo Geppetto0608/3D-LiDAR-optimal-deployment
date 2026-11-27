@@ -1,0 +1,25 @@
+{
+  "schema": "rsu_coverage_study_v1",
+  "split": "development",
+  "suite": "configs/library_expansion.json",
+  "new_targets": [
+    {"id": 430001, "parent_scenario_id": 1, "topology": "T_JUNCTION", "road_width": 11.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 45.0, "junction_y_m": 42.0}},
+    {"id": 430002, "parent_scenario_id": 1, "topology": "T_JUNCTION", "road_width": 10.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 58.0, "junction_y_m": 62.0}},
+    {"id": 430003, "parent_scenario_id": 2, "topology": "CROSS", "road_width": 10.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 32.0, "junction_y_m": 47.0}},
+    {"id": 430004, "parent_scenario_id": 2, "topology": "CROSS", "road_width": 13.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 60.0, "junction_y_m": 40.0}}
+  ],
+  "profiles": ["coverage", "infrastructure", "resilient"],
+  "k_values": [3, 4],
+  "seeds": [0, 1, 2, 3, 4],
+  "budgets": [
+    {"steps": 4096, "seconds": 600.0},
+    {"steps": 20000, "seconds": 2400.0},
+    {"steps": 100000, "seconds": 12000.0}
+  ],
+  "radius_m": 10.0,
+  "repair_evaluations": 10000,
+  "repair_seconds": 60.0,
+  "ls_evaluations": 1000000,
+  "initialization": "transfer_low",
+  "numeric_status": "illustrative_sensitivity_values_not_operational_requirements"
+}

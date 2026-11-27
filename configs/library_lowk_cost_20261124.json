@@ -1,0 +1,215 @@
+{
+  "schema": "library_lowk_cost_v1",
+  "targets": [
+    {
+      "name": "target_a_t_junction_l120",
+      "track": "A",
+      "topology": "T_JUNCTION",
+      "size_m": 120,
+      "width_m": 10,
+      "center_fraction": [
+        0.42,
+        0.55
+      ],
+      "seed": 2000
+    },
+    {
+      "name": "target_a_t_junction_l180",
+      "track": "A",
+      "topology": "T_JUNCTION",
+      "size_m": 180,
+      "width_m": 14,
+      "center_fraction": [
+        0.57,
+        0.43
+      ],
+      "seed": 2001
+    },
+    {
+      "name": "target_a_cross_l120",
+      "track": "A",
+      "topology": "CROSS",
+      "size_m": 120,
+      "width_m": 10,
+      "center_fraction": [
+        0.55,
+        0.42
+      ],
+      "seed": 2002
+    },
+    {
+      "name": "target_a_cross_l180",
+      "track": "A",
+      "topology": "CROSS",
+      "size_m": 180,
+      "width_m": 14,
+      "center_fraction": [
+        0.43,
+        0.57
+      ],
+      "seed": 2003
+    },
+    {
+      "name": "target_b_l160",
+      "track": "B",
+      "length_m": 160,
+      "width_m": 10,
+      "turn_deg": 15,
+      "modules": 2,
+      "seed": 2004
+    },
+    {
+      "name": "target_b_l240",
+      "track": "B",
+      "length_m": 240,
+      "width_m": 14,
+      "turn_deg": 30,
+      "modules": 3,
+      "seed": 2005
+    },
+    {
+      "name": "target_b_l320",
+      "track": "B",
+      "length_m": 320,
+      "width_m": 10,
+      "turn_deg": 60,
+      "modules": 4,
+      "seed": 2006
+    },
+    {
+      "name": "target_b_l480",
+      "track": "B",
+      "length_m": 480,
+      "width_m": 14,
+      "turn_deg": 75,
+      "modules": 6,
+      "seed": 2007
+    }
+  ],
+  "sampling": {
+    "installation_step_m": 4,
+    "heights_m": [
+      3,
+      5
+    ],
+    "relative_yaws_deg": [
+      -45,
+      -22.5,
+      0,
+      22.5,
+      45
+    ],
+    "pitches_deg": [
+      -20,
+      -10
+    ],
+    "target_heights_m": [
+      1,
+      1.5,
+      2
+    ],
+    "target_b_step_m": 1
+  },
+  "target_k": {
+    "target_a_t_junction_l120": [
+      2,
+      3,
+      4
+    ],
+    "target_a_t_junction_l180": [
+      2,
+      3,
+      4
+    ],
+    "target_a_cross_l120": [
+      2,
+      3,
+      4
+    ],
+    "target_a_cross_l180": [
+      2,
+      3,
+      4
+    ],
+    "target_b_l160": [
+      3,
+      4,
+      6
+    ],
+    "target_b_l240": [
+      3,
+      4,
+      6
+    ],
+    "target_b_l320": [
+      3,
+      4,
+      6
+    ],
+    "target_b_l480": [
+      6,
+      8
+    ]
+  },
+  "query_budget": 256,
+  "random_seeds": [
+    0,
+    1,
+    2
+  ],
+  "source_count": 3,
+  "alternatives": 12,
+  "scene_levels": [
+    "mixed",
+    "dense"
+  ],
+  "requirements": {
+    "overlap_ratio": 0,
+    "critical_overlap_ratio": 0,
+    "min_separation_m": 4
+  },
+  "cost_model": {
+    "base": 1,
+    "per_height_m": 0.1,
+    "per_service_distance_m": 0.008,
+    "reference_height_m": 3,
+    "corridor_hub_spacing_m": 160
+  },
+  "profiles": {
+    "base": {
+      "cost_per_k": null,
+      "critical_coverage_ratio": 0
+    },
+    "cost": {
+      "cost_per_k": 1.25,
+      "critical_coverage_ratio": 0
+    },
+    "cost_critical60": {
+      "cost_per_k": 1.25,
+      "critical_coverage_ratio": 0.6
+    },
+    "cost_critical80": {
+      "cost_per_k": 1.25,
+      "critical_coverage_ratio": 0.8
+    }
+  },
+  "optimization": {
+    "reference_seconds": 1800,
+    "arm_seconds": 300,
+    "surrogate_seconds": 15,
+    "gap": 0.01,
+    "min_seconds": 300,
+    "stagnation_seconds": 120,
+    "threads": 1,
+    "soft_memory_gb": 24
+  },
+  "execution": {
+    "workers": 2,
+    "hard_wall_hours": 168,
+    "job_wall_hours": 48,
+    "min_free_ram_gib": 48,
+    "min_free_disk_gib": 12,
+    "max_job_rss_gib": 40,
+    "max_total_rss_gib": 80
+  }
+}

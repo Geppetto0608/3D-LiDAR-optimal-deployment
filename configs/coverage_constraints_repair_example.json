@@ -1,0 +1,32 @@
+{
+  "schema": "constrained_coverage_v1",
+  "budget_k": 3,
+  "weights": {
+    "coverage_weight": 1.0,
+    "importance_weight": 0.5,
+    "overlap_penalty": 0.05,
+    "installation_cost_weight": 2.0
+  },
+  "cost": {
+    "base_per_sensor": 10.0,
+    "per_height_m": 1.0,
+    "regions": [{"bounds": [0.0, 0.0, 20.0, 100.0], "surcharge": 5.0}]
+  },
+  "constraints": {
+    "max_installation_cost": 60.0,
+    "min_xy_separation_m": 3.0,
+    "max_sensors_per_pole": 1,
+    "min_coverage_pct": 80.0,
+    "max_overlap_ratio": 0.9,
+    "forbidden_regions": [[0.0, 0.0, 1.0, 100.0], [23.0, 41.0, 25.0, 43.0]]
+  },
+  "regions": [
+    {
+      "name": "junction",
+      "bounds": [25.0, 45.0, 41.0, 61.0],
+      "importance_factor": 3.0,
+      "min_coverage_pct": 50.0,
+      "min_overlap_ratio": 0.02
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+case,profile,budget_k,critical_targets,critical_upper_count,required_count,budget,global_critical_upper_count,missing_group_upper_count,infeasible_proved,pareto_options,excluded_multi_group_poses,multi_group_solution_upper,relaxation
+target_b_l320_mixed,cost_critical80,3,1989,1182,1592,3.75,1488,1356,True,"[26, 15, 29]",36,1488,One sensor per necessary disjoint critical group; site conflicts relaxed
+target_b_l320_dense,cost_critical80,3,1989,1100,1592,3.75,1434,1356,True,"[26, 16, 36]",36,1434,One sensor per necessary disjoint critical group; site conflicts relaxed

@@ -3,7 +3,149 @@
 기존 Roadside CLI와 MAPPO v3를 유지하면서 두 application이 사용할 공통
 문제 표현과 GREEDY/MILP 엔진을 추가했다. 로컬 UI는 구현됐으며 지도/가중치 조건부 RL은 아직 미구현이다.
 
-## 로컬 배치 UI
+## Prototype runtime 실험 추가 (2026-10-06)
+
+### Fresh full-grid packed 기준선 완료 및 집계 (2026-10-14 확인)
+
+- `src/roadside/packed_candidates.py`: full installable grid, 전체 orientation, pruning/dedup 없이 NPY memmap packed 저장.
+- `prototype_full_grid.py`: 새 cache/후보 → packed GREEDY → swap 30초 → cut-MILP 300초 → direct 검산/3D 저장.
+- 지도별 frozen-source 순차 worker, RAM96GiB/디스크 headroom 사전 검사, Gurobi 1 thread/90GB soft memory.
+- 기존 online pose/기준선 archive 미사용. 4개 지도/K3,4 총8개, 새 root `results/prototype_full_grid_20261012`.
+- 2026-10-12 20:41~22:04:28 KST 8/8 완료, 경과 5,003.48초. 실행 프로세스 종료 확인.
+- 모두 status9/time limit, 상대 gap0.061~6.064%, discrete_optimal=false. direct 검산 기록 8/8 통과.
+- 지도별 worker peak RSS 5.00~6.81GiB, 후보 mask 작성349.57~599.10초. 공유 서버 단일 측정이라 통제된 speedup 주장은 하지 않음.
+- 테스트: 새5개(작은 실제 full-grid worker 포함), cut4개, pipeline7개, 문법/dry-run 통과.
+- `prototype_full_grid_report.py`: 실제 archive pose 포함, 동일 target/density/coverage/K 검사. 기준선8개+온라인72개 통과.
+- `comparison_report/comparison.csv` 18행, raw72행, validation summary 생성. 원자료/solver 변경 없이 집계.
+- LS/MAPPO 평균은97.642/97.087%, 새 incumbent 대비 평균차이 -1.229/-1.784%p. LS가 모든18조건에서 MAPPO 평균보다 높음.
+- LS4조건/MAPPO평균3조건이 이번 incumbent보다 높음. 전체 격자 해5/8은 이전 대표 격자 해보다 낮음. 최적성 주장이 아니라 제한시간 기준선 보강 필요.
+- 다음: 검증된 이전 오프라인 feasible 해를 초기해로 보존, 반복 cold-start 계측, 독립 prototype 선택/holdout 평가.
+
+### 공통 설치 격자 옵션과 영역 검사 (2026-10-12)
+
+- `candidate.xy_domain=installable_grid` 추가. 생략 시 기존 bin_representatives/후보 순서 유지.
+- 환경의 `installation_base_positions`에 기존 대표 격자와 전체 설치 가능 0.5m 격자 정의를 통합.
+- 공통 `validate_installation_pose`를 국소 MAPPO/LS pose 검사에서 사용. 기존 이동 2m/반경 10m 유지.
+- prototype_offline CLI에 명시적 `--xy-domain` 추가. 기본 config와 기존 결과/캐시는 수정하지 않음.
+- `prototype_domain_audit.py`는 geometry로 먼저 영역 생성 후 저장 pose를 검사. raycast/학습/solve 없음.
+- `results/prototype_domain_audit_20261012/report.json`: 72/72 포함, 새 영역 밖 0건, 기존 대표 XYZ 밖 8건 재확인.
+- 4개 지도 dedup 전 pose 약 93만~119만 개. 이후 위 full-grid runner로 전체 visibility/MILP 재계산8개 완료.
+- 5개 영역 테스트, pipeline 7개, 문법 검사, 기본 3방법 및 새 offline dry-run 통과.
+- runtime 8개와 refinement study 5개도 통과(총 25개). 테스트용 소규모 계산만 실행.
+- 기존 solver bound는 확장된 공간에서 무효. 물리 허용 공간 포함과 온라인 제한 탐색의 도달 가능성을 구분.
+- 작업 중 프로젝트가 `/home/robotserver/hj_ws_main`으로 이동됨. 과거 결과의 절대 경로는 보존.
+
+### Packed coverage-cut MILP 진단 (2026-10-12)
+
+- 기존 8개 기준선 저장 완료. 7개는 presolve에서 시간 초과하여 GREEDY 초기해만 남음.
+- `src/methods/coverage_cut_milp.py`: 같은 archive의 unweighted at-most-K maximum coverage를 lazy cut으로 표현.
+- 처음부터 전체 incidence 행렬을 넣지 않음. 정수해마다 실제 union을 계산하고 위반한 제약만 추가.
+- 전체 후보 교환 탐색 30초 + solver 300초. 온라인 배치를 warm start로 쓰지 않음.
+- `prototype_milp_diagnostic.py`: archive/source/이전 해 검증, 새 해 direct raycasting, JSON/NPY/3D 저장.
+- `prototype_cut_study.py`: frozen source에서 4개 target/K=3,4 순차 진단, 완료 대표 run 재사용 및 요약 CSV.
+- test_coverage_cut_milp 4 tests(9개 실제 solver/brute-force 비교 포함), 기존 pipeline 7 tests 통과.
+- 기존 geometry, candidate archive, 기본 MILP 함수/CLI는 수정하지 않음. 후보 영역 불일치 문제는 남아 있음.
+- cache 재사용 진단 시간이므로 cold-map speedup으로 해석 금지. 현재 상태는 각 결과 manifest 참조.
+- 대표 420002/K3 완료: 91.283% → 교환 탐색 99.918%, MILP 종료도 99.918%, solver upper bound 19547.4508 / gap 0.0791%.
+- 교환 탐색 7.72초, solver 300.01초(time limit). 최적성 증명은 아니며 direct raycast 검산 통과.
+- `results/prototype_cut_study_20261012`은 대표 run 1개 재사용 + 7개 순차 계산으로 2026-10-12 13:43:56 KST에 8/8 완료.
+- 2개 이산 최적성 확인(100% coverage), 6개 time limit이나 유한 상한 확보. 최대 상대 gap 1.4774%.
+- 저장된 direct-raycast 검증 8/8 참. 문서 갱신 시 학습/solve/raycast를 재실행하지 않음.
+- 6개는 교환 탐색과 최종 objective가 같고, solver 추가 개선은 420002/K4와 420004/K4에만 있음.
+- 최신 `online_comparison.csv`: paired 초기값 18개를 새 기준선에 연결. 이전 비교 CSV와 원자료는 보존.
+- LS/MAPPO 평균 기준선 차이 -1.299/-1.854%p. 영역 불일치 포함 기술통계이며 최적성 gap이나 speedup 증거가 아님.
+- README에 전체 8개 표, 비교 CSV 재생성 명령, 후보 공간/시간 범위 제한과 후속 계획 갱신.
+- 집계 tests/test_cut_study.py 1개 추가 통과. 기존 결과/캐시는 보존.
+
+### 새 지도 full-orientation 기준선 (2026-10-12)
+
+- `prototype_target_baseline.py`: 완료된 paired study의 4개 target/K=3,4를 새 cache로 독립 MILP 실행.
+- 온라인 snapshot의 기존 offline runner를 그대로 사용. top-M=0, 기존 2m 대표 XY, 300초/gap0/90GB/1 thread.
+- 온라인 해 warm start 금지, target별 순차 실행, 가용 RAM 96GiB 미만이면 새 작업 시작 거부.
+- source/온라인 evidence hash 고정, target 좌표 일치 검사, 상태·gap·bound와 시간 범위 분리 저장.
+- 후보 영역 검사에서 72개 온라인 결과 중 8개(LS 1, MAPPO 7)가 기존 MILP 대표 XYZ 밖임을 확인.
+  `online_domain.json`/CSV flags로 표시하며 global upper bound나 엄밀한 optimality gap으로 해석하지 않음.
+- `results/prototype_target_full_20261012` 10월 12일 03:29:20 KST 8/8 완료. 7개는 유한 bound 없는 시간 초과 결과.
+- 신규 tests/test_target_baseline.py 5개 + pipeline 7개 통과, dry-run 및 문법 검사 통과.
+
+### 초기값별 paired refinement (2026-10-11)
+
+- `prototype_refinement_study.py`: 최신 source/target library를 읽어 설치선별 센서 배분을 진단.
+- 24개 target/K 중 22개는 branch/side별 배분 불일치, 가능한 보간 2개. 실패를 수치 0으로 넣지 않음.
+- 먼저 K=3,4의 유효 초기값 18개: LS 18회 + MAPPO seed 0/1/2 총 54회 = 72회 비교.
+- 초기 coverage를 보고 방법 하나를 고르지 않고 low/high/interpolation 각각 독립 보정.
+- 같은 초기 pose hash, 반경 10m/soft limit 60초. 실제시간, overrun, ray 수, step 수를 구분.
+- fresh CPU worker / 1 thread. 코드·source geometry/config/pose snapshot에서 실행.
+- target full cache 금지, 보정 중 on-demand 질의만 사용. 별도 final direct 검산/3D 저장.
+- `tests/test_refinement_study.py` 5 tests, 기존 pipeline 7 tests/runtime 8 tests 통과.
+- 18개 초기값 평균: 초기95.661%, LS97.642%/3.91초, MAPPO97.087%/61.18초. 모든 조건에서 LS가 MAPPO 평균보다 높음.
+- target full-grid 기준선 비교표와72개 pose 포함/density 검증 완료. 통제된 반복 cold-start 시간 비교는 TBD. 재현 명령은 README 참조.
+- `results/prototype_refinement_smoke8_20261011` 6/6 완료, MAPPO 3회 각각 8 steps/PPO 1 update 확인.
+- `results/prototype_refinement_paired_20261011` 한국시간 10월 12일 00:58:58에 72/72 완료, 실패 0건.
+- 기존 geometry, MILP, MAPPO 알고리즘 및 라이브러리는 변경하지 않음.
+
+### 라이브러리 형상 확장 경로 (2026-10-08)
+
+- `prototype_offline.py --scenario-json`으로 명시적 synthetic 교차점 geometry 입력 지원.
+- `configs/library_expansion.json`: source 4개(T/C 각각 폭 7/14m), 별도 target 4개(폭 9/12m 및 교차점 변경).
+- `prototype_library.py`: 전체 orientation 후보 archive, K=1~6 MILP, 가족별 새 지도 전이/보간을 순차 처리.
+- 기존 library는 보존. `results/prototype_library_shapes_20261008`은 10월 8일 20:38:37 KST 완료(약 2시간 35분).
+- source 4개/K별 배치 24개 저장. analytic 인증 9개, time-limit best_known 15개(유한 bound/gap 없음).
+- 순차 1 thread, MILP 300초/gap 0/soft memory 90GB. 목표 gap 0과 실제 최적성 인증을 구분.
+- target 전체 cache와 MAPPO/target MILP는 실행하지 않음. source pose/geometry만 이용해 구간 비율 보간 후 direct raycast.
+- 설치선/실제 센서 수 대응 불가는 unavailable, 투영 실패는 failed로 저장. 성공 결과로 바꾸지 않음.
+- target/K 24개에서 단독 전이 48개, 보간 2개 완료. 보간 22개는 설치선 대응 불가, 실행 실패 0.
+- 성공한 보간은 새 십자 420003/420004의 K=4뿐. 전체 대응 가능성이나 near-optimal 성능을 입증한 결과가 아님.
+- 10월 9일 문서 확인: 50개 pose/coverage 배열과 JSON 일치, 3D/참조 파일 누락 0. 새 raycast 재검산은 아님.
+- 다음 단계는 대응 가능한 보조 library 설계 검토, 그 뒤 국소 MAPPO 및 동일 target의 전체 후보 MILP 비교.
+- tests/test_library_expansion.py 6 tests: 입력 분리/검증, dry-run, 불가 결과, 축소 실제 생성-전이 경로.
+- 정확한 명령과 신규 geometry, 출력 구조는 README의 라이브러리 형상 확장 절 참조.
+
+### 간단한 비대칭 형상 4개 추가 (2026-10-07)
+
+- OSM 확장은 보류. `configs/shape_pilot.json`에 교차점 위치를 바꾼 T자 2개/십자 2개 정의.
+- `Scenario.raw.geometry`를 공통 environment에서 처리하고 mesh/target/설치 판정/좌표/hash에 반영.
+- 기존 중앙 맵 및 cache key 회귀 유지. 기존 scenario 파일과 experiment.yaml은 그대로.
+- `prototype_runtime.py --shape-config configs/shape_pilot.json`으로 실행하며 width-only 경로도 유지.
+- 4개 맵 x 선택/local-search/MAPPO = 12개 CPU worker 완료. K=3, seed=0, MAPPO 256 steps.
+- `results/prototype_shape_pilot_20261007/index.html`에 맵과 3D 링크, CSV와 상세 metadata 저장.
+- 새로운 형상에서도 국소 보정은 작동하지만 1 PPO update 파일럿이므로 수렴/우월성 주장은 불가.
+- 이 파일럿 이후 2026-10-08에 같은 맵의 GREEDY/MILP top-10 기준선도 완료. 아래 기록 참조.
+
+### 같은 형상의 PPO 학습량 확장 (2026-10-07)
+
+- `results/prototype_shape_ppo4096_20261007/`: 4개 맵, K=3, seed=0, 동일 초기 배치/반경/CPU.
+- joint steps 256 -> 4,096, 업데이트 1 -> 16. rollout/epoch/기본 YAML은 변경하지 않음.
+- 안전 시간 제한 600초, 전부 조기 종료 없이 완료. 기존 정책을 재사용하지 않음.
+- 최고 coverage: t_left 96.572%, t_long_stem 89.385%, cross_left 81.405%, cross_asymmetric 78.401%.
+- online wall time 약 89~96초/맵. direct raycast 재검산 4/4 통과.
+- 마지막 비대칭 십자 정책은 69.477%로 최고 배치보다 낮음. 수렴/효율 우위 주장은 불가.
+- README에 정확한 실행/검증 명령과 이전 256-step 결과 비교 기록. 기존 결과 보존.
+
+### 형상 기준선 완료 (2026-10-08)
+
+- `results/prototype_shape_baselines_20261008/`: K=3, GREEDY/MILP 각 4개, 총 8개 완료 및 direct 재검산 8/8 통과.
+- MILP: top-10, 300초, gap 5%, 1 thread, soft memory 26GB. 기존 YAML/알고리즘 변경 없음.
+- MILP coverage: t_left 99.905%, t_long_stem 99.845%, cross_left 92.975%, cross_asymmetric 97.660%.
+- 모두 status 2. cross_left gap 1.053%, 나머지 solver-reported gap 0%. 후보 집합 안의 인증만 해당.
+- 중단 전 완료 5개 보존, 남은 3개 재실행. 중단 기록은 `interrupted_attempts/`, 재시도는 `resume_history` 보존.
+- `shape_baseline_report.py`: 기존 select/local-search/MAPPO 256/4096 + 기준선을 검증·집계하여 24행 CSV/PNG/PDF/HTML 생성.
+- 같은 geometry/target/LiDAR/K 확인. 초기화/전처리 포함 runtime과 solver-only 시간 구분.
+- MAPPO 4096은 네 맵 모두 MILP보다 낮고, GREEDY보다 높은 것은 한 맵뿐. 효율/near-optimal 주장 보류.
+- 정확한 실행/재검산/집계 명령과 전체 수치는 README의 2026-10-08 기준선 절에 기록.
+
+### 기존 순차 runtime 경로
+
+- `prototype_runtime.py`: 별도 순차 runner. 새 process/새 cache, 전체 online 시간과 단계별 시간,
+  ray 수·평가 수·메모리 계측, 입력 및 source snapshot, CSV 저장. `--execute` 없으면 계획만 확인.
+- `prototype_segments.py`: 동일 branch/side 설치 구간의 비율 좌표 보간. 기존 거리 보간은 유지.
+- `src/methods/local_search.py`: MAPPO와 같은 action/mask/radius를 사용하는 단일 센서 이웃 탐색.
+- 단독 전이 두 개와 보간 중 coverage가 가장 높은 초기 배치 하나만 골라 MAPPO 또는 local-search로 보정.
+- `src/core/runtime.py`: opt-in 계측. 기존 물리 모델·설정 기본값·기존 결과는 유지.
+- 실행 명령·수식·측정 범위는 README의 `순차 Runtime 비교 경로` 절에 기록.
+- 정식 runtime 성능 비교는 TBD. 경량 통합 실행은 학습 수렴이나 속도 우위를 입증하지 않음.
+
+## 로컬 UI 실행
 
 ```bash
 .venv/bin/python placement_ui.py --port 8765

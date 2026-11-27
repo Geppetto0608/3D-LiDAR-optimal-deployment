@@ -1,0 +1,18 @@
+{
+  "schema": "constrained_sensitivity_v1",
+  "split": "development",
+  "base_requirements": "coverage_constraints_example.json",
+  "target_id": 420002,
+  "initialization": "transfer_low",
+  "cases": [
+    {"id": "baseline", "axis": "baseline", "value": null},
+    {"id": "cost_38", "axis": "cost_budget", "value": 38.0},
+    {"id": "cost_39", "axis": "cost_budget", "value": 39.0},
+    {"id": "spacing_24", "axis": "min_separation", "value": 24.0},
+    {"id": "spacing_36", "axis": "min_separation", "value": 36.0},
+    {"id": "overlap_025", "axis": "region_overlap", "region": "junction", "value": 0.25},
+    {"id": "overlap_075", "axis": "region_overlap", "region": "junction", "value": 0.75},
+    {"id": "forbidden_1", "axis": "forbidden_half_extent", "center": [24.0, 42.0], "value": 1.0},
+    {"id": "forbidden_6", "axis": "forbidden_half_extent", "center": [24.0, 42.0], "value": 6.0}
+  ]
+}

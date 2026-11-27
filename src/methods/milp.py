@@ -61,16 +61,45 @@ def _solve_with_pulp(candidate_set: CandidateSet, budget_k: int, config: Experim
     return {"selected_ids": selected, "solver_status": pulp.LpStatus.get(prob.status, str(prob.status)), "solver_status_code": prob.status, "objective": float(pulp.value(prob.objective) or 0.0), "best_bound": None, "mip_gap": None, "solve_time_sec": time.time() - t0}
 
 
-def _solve_with_gurobi(candidate_set: CandidateSet, budget_k: int, config: ExperimentConfig, start_ids: Sequence[int] | None = None, *, coefficients=None) -> dict[str, Any]:
+def _validate_selection_groups(num_candidates, budget_k, selection_groups, start_ids):
+    """Exact, disjoint candidate-group quotas, covering the entire candidate set."""
+    if selection_groups is None:
+        return
+    seen = set()
+    total = 0
+    for ids, count in selection_groups:
+        if not isinstance(count, (int, np.integer)) or count < 0 or count > len(ids):
+            raise ValueError('Invalid candidate group quota')
+        group = set(ids)
+        if len(group) != len(ids) or seen.intersection(group):
+            raise ValueError('Candidate selection groups must be disjoint')
+        if any(not isinstance(i, (int, np.integer)) or not 0 <= i < num_candidates for i in ids):
+            raise ValueError('Invalid candidate group ID')
+        if start_ids is not None and len(group.intersection(start_ids)) != count:
+            raise ValueError('Warm start violates exact group quota')
+        seen.update(group)
+        total += count
+    if seen != set(range(num_candidates)) or total != budget_k:
+        raise ValueError('Group quotas must partition candidates and sum to K')
+    if start_ids is not None and (len(start_ids) != budget_k or len(set(start_ids)) != budget_k):
+        raise ValueError('Invalid grouped warm start')
+
+
+def _solve_with_gurobi(candidate_set: CandidateSet, budget_k: int, config: ExperimentConfig, start_ids: Sequence[int] | None = None, *, coefficients=None, selection_groups=None) -> dict[str, Any]:
     import gurobipy as gp
     import scipy.sparse as sp
     from gurobipy import GRB
 
+    _validate_selection_groups(len(candidate_set.candidates), budget_k, selection_groups, start_ids)
     model = gp.Model("lidar_budget_coverage")
     model.Params.OutputFlag = 0
     model.Params.Threads = int(config.threads)
     model.Params.TimeLimit = float(config.time_limit_sec)
     model.Params.MIPGap = float(config.mip_gap)
+    if config.solver.get("log_file"):
+        model.Params.OutputFlag = 1
+        model.Params.LogToConsole = 0
+        model.Params.LogFile = str(config.solver['log_file'])
 
     def set_optional_param(name: str, value: Any) -> None:
         try:
@@ -95,10 +124,67 @@ def _solve_with_gurobi(candidate_set: CandidateSet, budget_k: int, config: Exper
     x = z[:num_candidates]
     y = z[num_candidates:]
     start_set = {int(v) for v in (start_ids or [])}
-    for i in range(num_candidates):
-        if start_set:
-            z[i].Start = 1.0 if i in start_set else 0.0
+    if start_set:
+        x.Start = np.array([float(i in start_set) for i in range(num_candidates)])
 
+    batch_size = int(config.solver.get('sparse_target_batch_size', 0))
+    if batch_size > 0 and start_set:
+        covered = np.zeros(num_targets, dtype=bool)
+        for candidate in candidate_set.candidates:
+            if candidate.candidate_id in start_set:
+                covered |= candidate.covered
+        y.Start = covered.astype(float)
+    if batch_size > 0:
+        _add_batched_coverage(model, z, candidate_set, budget_k, batch_size)
+    else:
+        _add_full_coverage(model, z, candidate_set, budget_k)
+    if selection_groups is not None:
+        for index, (ids, count) in enumerate(selection_groups):
+            model.addConstr(x[np.asarray(ids, dtype=int)].sum() == int(count), name=f'installation_group_{index}')
+    if coefficients is None:
+        model.setObjective(y.sum(), GRB.MAXIMIZE)
+    else:
+        rewards, costs = coefficients
+        model.setObjective(rewards @ y - costs @ x, GRB.MAXIMIZE)
+    try:
+        model.optimize()
+        solution = z.X[:num_candidates] if model.SolCount > 0 else []
+        selected = [i for i, value in enumerate(solution) if float(value) > 0.5]
+        if model.SolCount == 0 and start_ids:
+            selected = [int(v) for v in start_ids]
+        return {"selected_ids": selected, "solver_status": str(model.Status), "solver_status_code": int(model.Status), "objective": float(model.ObjVal) if model.SolCount > 0 else None, "best_bound": float(model.ObjBound), "mip_gap": float(model.MIPGap) if model.SolCount > 0 else None, "solve_time_sec": float(model.Runtime), "sparse_target_batch_size": batch_size}
+    finally:
+        model.dispose()
+
+
+def _add_batched_coverage(model, z, candidate_set, budget_k, batch_size):
+    import scipy.sparse as sp
+
+    m = len(candidate_set.candidates)
+    n = len(candidate_set.target_points)
+    # Bound temporary incidence storage by targets per batch, not total edges.
+    for first in range(0, n, batch_size):
+        last = min(first + batch_size, n)
+        dense = np.empty((last-first, m), dtype=bool)
+        for candidate in candidate_set.candidates:
+            dense[:, candidate.candidate_id] = candidate.covered[first:last]
+        coverage = sp.csr_matrix(dense, dtype=np.float64)
+        del dense
+        coverage.data *= -1
+        identity = sp.csr_matrix((np.ones(last-first),
+            (np.arange(last-first), np.arange(first, last))), shape=(last-first, n))
+        constraints = sp.hstack([coverage, identity], format='csr')
+        model.addMConstr(constraints, z, '<', np.zeros(last-first), name=f'coverage_{first}')
+        del coverage, identity, constraints
+        model.update()
+        print(f'[MILP assembly] targets {last}/{n}', flush=True)
+    model.addConstr(z[:m].sum() <= int(budget_k), name='budget')
+
+
+def _add_full_coverage(model, z, candidate_set, budget_k):
+    import scipy.sparse as sp
+    num_candidates = len(candidate_set.candidates)
+    num_targets = len(candidate_set.target_points)
     # Build target coverage constraints as one sparse matrix operation:
     # y_j - sum_i a_ij x_i <= 0, plus sum_i x_i <= K.
     target_rows: list[np.ndarray] = []
@@ -124,17 +210,6 @@ def _solve_with_gurobi(candidate_set: CandidateSet, budget_k: int, config: Exper
     constraints = sp.vstack([cover_constraints, budget_constraints], format="csr")
     rhs = np.concatenate([np.zeros(num_targets, dtype=np.float64), np.asarray([float(budget_k)], dtype=np.float64)])
     model.addMConstr(constraints, z, "<", rhs, name="coverage_budget")
-    if coefficients is None:
-        model.setObjective(y.sum(), GRB.MAXIMIZE)
-    else:
-        rewards, costs = coefficients
-        model.setObjective(rewards @ y - costs @ x, GRB.MAXIMIZE)
-    model.optimize()
-    solution = z.X[:num_candidates] if model.SolCount > 0 else []
-    selected = [i for i, value in enumerate(solution) if float(value) > 0.5]
-    if model.SolCount == 0 and start_ids:
-        selected = [int(v) for v in start_ids]
-    return {"selected_ids": selected, "solver_status": str(model.Status), "solver_status_code": int(model.Status), "objective": float(model.ObjVal) if model.SolCount > 0 else None, "best_bound": float(model.ObjBound) if model.SolCount > 0 else None, "mip_gap": float(model.MIPGap) if model.SolCount > 0 else None, "solve_time_sec": float(model.Runtime)}
 
 
 def solve_problem(problem, config: ExperimentConfig):

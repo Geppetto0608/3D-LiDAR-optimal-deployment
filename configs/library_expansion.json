@@ -1,0 +1,28 @@
+{
+  "schema": "prototype_library_expansion_v1",
+  "split": "development",
+  "families": [
+    {
+      "name": "t_offset",
+      "sources": [
+        {"id": 410001, "parent_scenario_id": 1, "topology": "T_JUNCTION", "road_width": 7.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 35.0, "junction_y_m": 55.0}},
+        {"id": 410002, "parent_scenario_id": 1, "topology": "T_JUNCTION", "road_width": 14.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 35.0, "junction_y_m": 55.0}}
+      ],
+      "targets": [
+        {"id": 420001, "parent_scenario_id": 1, "topology": "T_JUNCTION", "road_width": 9.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 37.0, "junction_y_m": 57.0}},
+        {"id": 420002, "parent_scenario_id": 1, "topology": "T_JUNCTION", "road_width": 12.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 33.0, "junction_y_m": 53.0}}
+      ]
+    },
+    {
+      "name": "cross_offset",
+      "sources": [
+        {"id": 410003, "parent_scenario_id": 2, "topology": "CROSS", "road_width": 7.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 40.0, "junction_y_m": 60.0}},
+        {"id": 410004, "parent_scenario_id": 2, "topology": "CROSS", "road_width": 14.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 40.0, "junction_y_m": 60.0}}
+      ],
+      "targets": [
+        {"id": 420003, "parent_scenario_id": 2, "topology": "CROSS", "road_width": 9.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 42.0, "junction_y_m": 58.0}},
+        {"id": 420004, "parent_scenario_id": 2, "topology": "CROSS", "road_width": 12.0, "num_lanes": 2, "provenance": "synthetic_junction_offset", "geometry": {"junction_x_m": 38.0, "junction_y_m": 62.0}}
+      ]
+    }
+  ]
+}
